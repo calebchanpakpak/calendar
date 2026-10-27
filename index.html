@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calendar</title>
+<!-- Calendar V3 (local-first PWA, GitHub Pages): static files + IndexedDB on the phone + background sync to the
+     Apps Script JSON API (Api.gs doPost). The UI is the V2.4 page. No server URL or token in this file:
+     both are typed once in the Connection sheet and stay on the phone. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#5a6dbe">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Calendar">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+  /* v2.1 theme: soft pink-blue. Event colour groups (CONFIG.COLORS) are not part of the theme. */
+  :root {
+    --bg1:#fdf1f5; --bg2:#eef2fc;            /* page: blush -> pale periwinkle */
+    --card:#fcfbfe; --line:#e4e1f0; --line-soft:#efecf6;
+    --primary:#5a6dbe; --primary-hover:#4f62b0; /* periwinkle, darkened from #7c8fd6 so white text stays readable */
+    --accent:#e6a5bd; --accent-light:#f7dce6;   /* dusty pink: active tab, toggles, focus ring */
+    --text:#2e3047; --muted:#6e7089;
+    --today-col:#fbf0f5; --other-day:#f6f4fb;
+    --danger:#b8325e; --danger-light:#fbe8ef;
+  }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; color:var(--text); min-height:100vh;
+         background:linear-gradient(160deg, var(--bg1) 0%, var(--bg2) 100%) fixed; }
+  header { position:sticky; top:0; background:rgba(252,251,254,.92); backdrop-filter:blur(6px); border-bottom:1px solid var(--line); padding:10px 14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; z-index:5; }
+  h1 { font-size:18px; margin:0 8px 0 0; color:var(--text); }
+  label { font-size:14px; cursor:pointer; }
+  input[type=checkbox] { accent-color:var(--accent); }
+  button { font:inherit; font-size:14px; padding:5px 11px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; }
+  button:hover { background:var(--accent-light); border-color:var(--accent); }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:none; box-shadow:0 0 0 3px rgba(230,165,189,.6); border-color:var(--accent); }
+  button.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  button.primary:hover { background:var(--primary-hover); border-color:var(--primary-hover); }
+  .tabs button.on { background:var(--accent); color:var(--text); border-color:var(--accent); font-weight:600; }
+  .nav { display:none; gap:6px; align-items:center; } .nav.show { display:flex; }
+  #rangeLabel { font-weight:600; font-size:14px; min-width:130px; }
+  #status { font-size:13px; color:var(--muted); }
+  main { max-width:1100px; margin:0 auto; padding:10px 12px 80px; }
+  /* list view */
+  #list { max-width:820px; margin:0 auto; }
+  .day h2 { font-size:14px; color:var(--muted); margin:18px 0 6px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .day.today h2 { color:var(--primary); }
+  .ev { display:flex; gap:10px; padding:8px 10px; margin:4px 0; border-radius:6px; border-left:5px solid; background:var(--card); }
+  .time { width:92px; flex:none; font-size:13px; color:#4a4c66; }
+  .title { font-weight:600; font-size:14px; }
+  .meta { font-size:12px; color:var(--muted); margin-top:2px; white-space:pre-wrap; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:8px; background:rgba(46,48,71,.07); margin-left:6px; font-weight:400; }
+  /* week view */
+  .wk { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  .wk-inner { min-width:700px; }
+  .wk-head, .wk-allday { display:grid; grid-template-columns:44px repeat(7, 1fr); border-bottom:1px solid var(--line); }
+  .wk-head div { font-size:12px; text-align:center; padding:4px 2px; color:var(--muted); }
+  .wk-head div.today { color:var(--primary); font-weight:700; }
+  .wk-allday > div { border-left:1px solid var(--line-soft); padding:2px; min-height:20px; }
+  /* v2.4: a multi-day event is ONE bar across its days in the top strip (all-day and timed alike) */
+  .wk-allday > div.wk-bar { border-left:0; padding:0 5px; min-height:0; height:14px; line-height:14px; font-size:11px; margin:1px 2px; border-radius:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:1; cursor:pointer; }
+  .wk-allday > div.wk-bar.cl { border-top-left-radius:0; border-bottom-left-radius:0; margin-left:0; }
+  .wk-allday > div.wk-bar.cr { border-top-right-radius:0; border-bottom-right-radius:0; margin-right:0; }
+  .wk-allday > div.wk-ad-chips { border-left:0; min-height:0; padding:0 2px 2px; }
+  .chip { font-size:11px; border-radius:4px; padding:1px 4px; margin:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:default; }
+  .wk-body { position:relative; display:grid; grid-template-columns:44px repeat(7, 1fr); height:520px; overflow-y:auto; }
+  .wk-hours { position:relative; }
+  .wk-hours div, .wk-col .hr { position:absolute; left:0; right:0; height:40px; border-top:1px solid var(--line-soft); font-size:10px; color:#9a9cb2; text-align:right; padding-right:4px; box-sizing:border-box; }
+  .wk-col { position:relative; border-left:1px solid var(--line-soft); height:960px; }
+  .wk-col.today { background:var(--today-col); }
+  .blk { position:absolute; border-radius:4px; padding:1px 3px; font-size:11px; overflow:hidden; box-sizing:border-box; border:1px solid rgba(255,255,255,.7); line-height:1.2; }
+  .now { position:absolute; left:0; right:0; border-top:2px solid #d9547f; z-index:3; }
+  /* month view */
+  .mo { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .mo-dows, .mo-week { display:grid; grid-template-columns:repeat(7, 1fr); }
+  .mo-week { position:relative; }
+  .mo .dow { font-size:12px; text-align:center; padding:4px; color:var(--muted); border-bottom:1px solid var(--line); }
+  .mo .cell { position:relative; min-height:116px; box-sizing:border-box; border-right:1px solid var(--line-soft); border-bottom:1px solid var(--line-soft); padding:2px; cursor:pointer; min-width:0; }
+  .mo .cell:hover { background:#fdf6f9; }
+  .mo .cell.other { background:var(--other-day); color:#a9aabd; }
+  .mo .cell.today { background:#fbeef4; box-shadow:inset 0 0 0 2px var(--accent); }
+  .mo .cell.today .num { background:var(--primary); color:#fff; border-radius:10px; padding:0 6px; }
+  .mo .num { font-size:12px; display:inline-block; line-height:16px; }
+  /* v2.3: fixed rows so a day's own chips and the spanning bars line up: day-number line 18px, then 5 rows of 16px, then '+N more' */
+  .mo .numline { height:16px; margin-bottom:2px; display:flex; align-items:center; gap:3px; overflow:hidden; }
+  .mo .slot { height:14px; line-height:14px; margin:0 0 2px; box-sizing:border-box; }
+  .mo .chip.slot { padding:0 4px; }
+  .mo .more { height:14px; line-height:14px; font-weight:600; color:var(--primary); padding:0 2px; cursor:pointer; }
+  .more { font-size:11px; color:var(--muted); }
+  /* form */
+  form { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin:0 auto 12px; max-width:820px; display:none; gap:8px; flex-wrap:wrap; }
+  form.open { display:flex; }
+  form input, form select, form textarea { font:inherit; font-size:14px; padding:5px; border:1px solid #d6d2e6; border-radius:4px; background:#fff; color:var(--text); }
+  form .row { display:flex; flex-wrap:wrap; gap:8px; width:100%; align-items:center; }
+  .sugg-wrap { position:relative; flex:1; min-width:200px; }
+  .sugg-wrap input { width:100%; box-sizing:border-box; }
+  #sugg, #famSugg { position:absolute; left:0; right:0; top:100%; background:var(--card); border:1px solid var(--line); border-radius:4px; z-index:10; max-height:220px; overflow-y:auto; display:none; box-shadow:0 2px 8px rgba(46,48,71,.15); }
+  #sugg div, #famSugg div { padding:6px 8px; cursor:pointer; font-size:14px; } #sugg div.act, #sugg div:hover, #famSugg div.act, #famSugg div:hover { background:var(--accent-light); }
+  .sw { width:26px; height:26px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px #c9c5dc; cursor:pointer; padding:0; }
+  .sw.on { box-shadow:0 0 0 3px var(--text); }
+  .pchip { font-size:13px; padding:3px 10px; border-radius:14px; border:1px solid; background:var(--card); cursor:pointer; }
+  .muted { font-size:12px; color:var(--muted); }
+  .hide { display:none !important; }
+  /* v2.1: delete button + event details popup */
+  .ev .body { flex:1; min-width:0; }
+  button.del { flex:none; align-self:flex-start; font-size:12px; padding:2px 8px; color:var(--danger); border-color:#ebc3d2; background:var(--card); }
+  button.del:hover { background:var(--danger-light); border-color:var(--danger); }
+  button.danger { background:var(--danger); color:#fff; border-color:var(--danger); }
+  button.danger:hover { background:#a82d56; border-color:#a82d56; }
+  .chip[data-id], .blk[data-id] { cursor:pointer; }
+  #popBack { position:fixed; inset:0; background:rgba(46,48,71,.35); z-index:20; display:flex; align-items:center; justify-content:center; padding:12px; }
+  #pop { background:var(--card); border-radius:8px; padding:14px; max-width:420px; width:100%; box-shadow:0 4px 18px rgba(46,48,71,.25); border-top:6px solid; }
+  #pop .title { font-size:16px; margin-bottom:4px; }
+  #pop .row { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }
+  /* v2.2: edit screen, month spanning bars + day markers, day preview, swipe + slide */
+  .ev { cursor:pointer; } .ev:hover { filter:brightness(.97); }
+  #editHead .ttl { font-weight:600; }
+  #addForm { scroll-margin-top:72px; }   /* stays clear of the sticky top bar when opened from Week / Month */
+  #editNote { flex:1; }
+  .bar { position:absolute; height:14px; line-height:14px; font-size:11px; padding:0 5px; border-radius:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-sizing:border-box; z-index:2; cursor:pointer; }
+  .bar.cl { border-top-left-radius:0; border-bottom-left-radius:0; }
+  .bar.cr { border-top-right-radius:0; border-bottom-right-radius:0; }
+  .marks { display:inline-flex; gap:2px; overflow:hidden; }   /* v2.3: the per-day dots sit beside the day number (no row of their own) */
+  .mk { width:6px; height:6px; flex:none; border-radius:50%; display:inline-block; }
+  #month, #week { user-select:none; -webkit-user-select:none; }
+  #month { touch-action:pan-y; }
+  .slide-l { animation:slideL .22s ease-out; } .slide-r { animation:slideR .22s ease-out; }
+  @keyframes slideL { from { transform:translateX(36px); opacity:.35; } to { transform:none; opacity:1; } }
+  @keyframes slideR { from { transform:translateX(-36px); opacity:.35; } to { transform:none; opacity:1; } }
+  @media (prefers-reduced-motion: reduce) { .slide-l, .slide-r { animation:none; } }
+  #pop h3 { margin:0 0 8px; font-size:16px; }
+  .dp-ev { display:flex; gap:10px; padding:6px 8px; margin:4px 0; border-radius:6px; border-left:4px solid; cursor:pointer; font-size:14px; }
+  .dp-time { width:100px; flex:none; font-size:13px; color:#4a4c66; }
+  .dp-empty { text-align:center; color:var(--muted); padding:18px 0 8px; font-size:15px; }
+  #pop .row.center { justify-content:center; }
+  button.big { font-size:16px; padding:8px 20px; }
+  /* v2.3: "Only this event / All events" chooser (big touch targets) + Duplicate (Both) fields */
+  .scope-btn { display:block; width:100%; text-align:left; min-height:58px; font-size:16px; padding:10px 14px; margin:8px 0 0; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; box-sizing:border-box; }
+  .scope-btn:hover, .scope-btn:active { background:var(--accent-light); border-color:var(--accent); }
+  .scope-btn b { display:block; font-size:16px; } .scope-btn span { display:block; font-size:13px; color:var(--muted); margin-top:2px; }
+  #pop .scope-sub { font-size:14px; color:#4a4c66; margin-bottom:4px; }
+  #scopeCancel { font-size:16px; padding:8px 22px; }
+  #famRow input { flex:1; min-width:160px; }
+  @media (max-width:600px) { .time { width:70px; } .mo .cell { min-height:116px; padding:2px 1px; } .bar { font-size:10px; padding:0 3px; } .chip { font-size:10px; } }
+  /* ===== V3: sync pill (as Vault V3), settings, toast, update bar ===== */
+  .topline { display:flex; align-items:center; gap:8px; width:100%; }
+  .topline .sp { flex:1; }
+  .gear { border-radius:999px; padding:4px 9px; }
+  .syncpill { flex:none; border:1.5px solid var(--line); background:#fff; border-radius:999px; padding:5px 10px; font-size:12px; font-weight:600; color:var(--muted); white-space:nowrap; max-width:56vw; overflow:hidden; text-overflow:ellipsis; }
+  .syncpill:hover { background:#fff; }
+  .syncpill.ok { color:#16a34a; border-color:#bbf7d0; }
+  .syncpill.pend { color:#075985; border-color:#bae6fd; background:#f0f9ff; }
+  .syncpill.off { color:#374151; background:#f3f4f6; }
+  .syncpill.bad { color:var(--danger); border-color:#fecaca; background:#fef2f2; }
+  .syncpill.busy { color:var(--primary); }
+  .syncpill small { font-weight:400; opacity:.8; }
+  .badge.pend { background:#e0f2fe; color:#075985; }
+  .toast { pointer-events:none; position:fixed; left:50%; top:calc(14px + env(safe-area-inset-top)); text-align:center; line-height:1.4; transform:translateX(-50%) translateY(-140px); background:#2e3047; color:#fff; padding:10px 16px; border-radius:12px; font-size:14px; z-index:50; transition:transform .25s; max-width:90%; }
+  .toast.on { transform:translateX(-50%) translateY(0); }
+  .netbar { display:flex; align-items:center; justify-content:space-between; gap:8px; background:var(--accent-light); padding:8px 14px; font-size:13px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:8px 0; }
+  .card .ct { font-weight:600; font-size:14px; margin-bottom:6px; }
+  .kv { display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:4px 0; border-bottom:1px solid var(--line-soft); }
+  .kv:last-child { border-bottom:0; }
+  .kv span:first-child { color:var(--muted); }
+  .kv span:last-child { text-align:right; }
+  .stack { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+  .stack button { padding:9px 12px; }
+  .fld { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  .fld + input { width:100%; box-sizing:border-box; font-size:16px; padding:8px; border:1px solid var(--line); border-radius:6px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:8px; }
+  .failrow { font-size:13px; padding:6px 0; border-bottom:1px solid var(--line-soft); }
+  .failrow b { display:block; }
+</style>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+<div id="updbar"></div>
+<header>
+  <div class="topline"><h1>Calendar</h1><span class="sp"></span><button type="button" class="gear" id="gearBtn" title="Settings">⚙︎</button><button type="button" class="syncpill" id="syncPill">…</button></div>
+  <span class="tabs"><button data-view="list" class="on">List</button> <button data-view="week">Week</button> <button data-view="month">Month</button></span>
+  <span class="nav" id="nav"><button id="prevBtn">‹</button><button id="todayBtn">Today</button><button id="nextBtn">›</button><span id="rangeLabel"></span></span>
+  <label><input type="checkbox" id="hideFamily"> Hide family</label>
+  <label><input type="checkbox" id="hidePersonal"> Hide personal</label>
+  <label id="pastWrap"><input type="checkbox" id="showPast"> Show past</label>
+  <button class="primary" id="addBtn">+ Add event</button>
+  <button type="button" id="dupBtn" title="Find leftover copies of family events in Google Calendar">Clean up duplicates</button>
+  <span id="status">Loading…</span>
+</header>
+<main>
+  <form id="addForm" autocomplete="off">
+    <div class="row hide" id="editHead"><span class="ttl">Edit event</span><span id="editNote" class="muted"></span></div>
+    <div class="row">
+      <select name="category" id="category">
+        <option value="personal">Personal only</option>
+        <option value="family">Family</option>
+        <option value="both">Duplicate (Both)</option>
+      </select>
+      <div class="sugg-wrap"><input name="title" id="title" placeholder="Title" required><div id="sugg"></div></div>
+    </div>
+    <div class="row" id="colorRow"><span class="muted">Colour:</span><span id="swatches" style="display:flex;gap:6px;flex-wrap:wrap"></span></div>
+    <div class="row" id="presetRow"></div>
+    <div class="row hide" id="famRow"><span class="muted">Family title:</span><div class="sugg-wrap"><input name="familyTitle" id="familyTitle" placeholder="C: mom" autocomplete="off"><div id="famSugg"></div></div><span class="muted">orange · Google Calendar</span></div>
+    <div class="row hide" id="famPresetRow"></div>
+    <div class="row hide" id="guestRow"><span class="muted">Share with (each ticked person gets an invite e-mail):</span><span id="guestBox"></span></div>
+    <div class="row">
+      <input type="date" name="date" id="date" required>
+      <input type="time" name="startTime"> –
+      <input type="time" name="endTime">
+      <input type="date" name="endDate" title="End date (optional)">
+      <label><input type="checkbox" name="allDay"> All day</label>
+    </div>
+    <div class="row">
+      <span class="muted">Repeat:</span>
+      <select name="freq" id="freq"><option value="none">Does not repeat</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>
+      <span id="repOpts" class="hide" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        every <input type="number" name="interval" min="1" value="1" style="width:56px"> <span id="unit">week(s)</span>
+        <select name="mode" id="mode" class="hide"><option value="date"></option><option value="weekday"></option></select>
+        <select name="ends" id="ends"><option value="never">forever</option><option value="count">for … times</option><option value="until">until date</option></select>
+        <input type="number" name="count" min="1" value="10" style="width:64px" class="hide" id="count">
+        <input type="date" name="until" class="hide" id="until">
+      </span>
+    </div>
+    <div class="row"><textarea name="description" placeholder="Description (optional)" rows="2" style="flex:1"></textarea></div>
+    <div class="row"><button class="primary" type="submit" id="saveBtn">Save</button><button type="button" id="cancelBtn">Cancel</button><span style="flex:1"></span><button type="button" class="danger hide" id="formDelBtn">Delete</button></div>
+  </form>
+  <div id="list"></div>
+  <div id="week" class="hide"></div>
+  <div id="month" class="hide"></div>
+  <div id="popBack" class="hide"><div id="pop"></div></div>
+</main>
+<script src="idb.js"></script>
+<script src="sync.js"></script>
+<script>
+/* ===== recurrence engine (pure functions, wall-clock dates as 'yyyy-MM-dd') ===== */
+const DAY = 864e5, WD = ['SU','MO','TU','WE','TH','FR','SA'];
+const ymd = s => { const p = s.split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]); };      // 'yyyy-MM-dd' -> UTC ms
+const iso = t => new Date(t).toISOString().slice(0, 10);                                               // UTC ms -> 'yyyy-MM-dd'
+const addDays = (s, n) => iso(ymd(s) + n * DAY);
+const dow = s => new Date(ymd(s)).getUTCDay();                                                         // 0 = Sunday
+const mins = hm => hm ? (+hm.slice(0, 2)) * 60 + (+hm.slice(3, 5)) : 0;
+
+/** 'RRULE:FREQ=..;..' (+ optional ' | EXDATE: yyyy-MM-dd HH:mm, ...') -> {freq, interval, count, until, byday[], bymonthday[], bymonth[], ex:Set(dates)} */
+function parseRule(text) {
+  if (!text || text.indexOf('RRULE:') !== 0) return null;
+  const parts = text.split(' | '), r = { freq: '', interval: 1, count: 0, until: '', byday: [], bymonthday: [], bymonth: [], ex: new Set() };
+  parts[0].slice(6).split(';').forEach(kv => {
+    const [k, v] = kv.split('=');
+    if (k === 'FREQ') r.freq = v;
+    else if (k === 'INTERVAL') r.interval = Math.max(1, parseInt(v, 10) || 1);
+    else if (k === 'COUNT') r.count = parseInt(v, 10) || 0;
+    else if (k === 'UNTIL') r.until = v.slice(0, 4) + '-' + v.slice(4, 6) + '-' + v.slice(6, 8); // inclusive date
+    else if (k === 'BYDAY') r.byday = v.split(',').map(x => { const m = x.match(/^([+-]?\d+)?([A-Z]{2})$/); return m ? { n: m[1] ? parseInt(m[1], 10) : 0, wd: WD.indexOf(m[2]) } : null; }).filter(Boolean);
+    else if (k === 'BYMONTHDAY') r.bymonthday = v.split(',').map(Number);
+    else if (k === 'BYMONTH') r.bymonth = v.split(',').map(Number);
+  });
+  // EXDATEs are matched by date only: old N Calendar series were made in Hong Kong time, so their EXDATE clock times can be 1h off after DST.
+  parts.slice(1).forEach(p => { if (p.indexOf('EXDATE:') === 0) p.slice(7).split(',').forEach(x => { const d = x.trim().slice(0, 10); if (d) r.ex.add(d); }); });
+  return ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].indexOf(r.freq) >= 0 ? r : null;
+}
+
+/** Candidate dates of one month (y, m 1-12) for a MONTHLY/YEARLY rule, sorted. */
+function monthDays(r, y, m, startDate) {
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate(), out = [];
+  const pad = n => String(n).padStart(2, '0'), d = n => y + '-' + pad(m) + '-' + pad(n);
+  if (r.byday.length) {
+    r.byday.forEach(b => {
+      const all = [];
+      for (let i = 1; i <= last; i++) if (new Date(Date.UTC(y, m - 1, i)).getUTCDay() === b.wd) all.push(i);
+      if (!b.n) all.forEach(i => out.push(d(i)));
+      else { const i = b.n > 0 ? all[b.n - 1] : all[all.length + b.n]; if (i) out.push(d(i)); }
+    });
+  } else if (r.bymonthday.length) {
+    r.bymonthday.forEach(n => { const i = n > 0 ? n : last + 1 + n; if (i >= 1 && i <= last) out.push(d(i)); });
+  } else {
+    const i = +startDate.slice(8, 10); if (i <= last) out.push(d(i));               // same date number; skipped in short months
+  }
+  return out.sort();
+}
+
+/** All occurrence start dates of event e that fall in [from, to] (inclusive, 'yyyy-MM-dd').
+ *  Bounded: stops at `to`, COUNT, UNTIL or 5000 generated candidates. */
+function occurrenceDates(e, from, to) {
+  const r = parseRule(e.recurrence), span = e.endDate && e.endDate > e.date ? (ymd(e.endDate) - ymd(e.date)) / DAY : 0;
+  const lo = addDays(from, -span);                 // multi-day events that started earlier still overlap
+  if (!r) return (e.date >= lo && e.date <= to) ? [e.date] : [];
+  const out = [], start = e.date;
+  let n = 0, guard = 0;
+  const take = d => {                               // returns false when the series is finished
+    if (d < start) return true;
+    if (r.until && d > r.until) return false;
+    if (r.count && n >= r.count) return false;
+    n++;
+    if (d > to) return false;
+    if (d >= lo && !r.ex.has(d)) out.push(d);
+    return true;
+  };
+  // Fast-forward when no COUNT (COUNT needs every earlier occurrence counted).
+  const skip = !r.count;
+  if (r.freq === 'DAILY') {
+    let k = skip && lo > start ? Math.floor((ymd(lo) - ymd(start)) / DAY / r.interval) : 0;
+    for (; guard++ < 5000; k++) if (!take(addDays(start, k * r.interval))) break;
+  } else if (r.freq === 'WEEKLY') {
+    const days = r.byday.length ? r.byday.map(b => b.wd) : [dow(start)];
+    const order = days.map(w => (w + 6) % 7).sort((a, b) => a - b);          // Monday-based offsets
+    const week0 = addDays(start, -((dow(start) + 6) % 7));                   // Monday of the first week
+    let k = skip && lo > start ? Math.max(0, Math.floor((ymd(lo) - ymd(week0)) / DAY / 7 / r.interval) - 1) : 0;
+    outer: for (; guard++ < 5000; k++) {
+      const mon = addDays(week0, k * 7 * r.interval);
+      for (const o of order) if (!take(addDays(mon, o))) break outer;
+    }
+  } else {
+    const yearly = r.freq === 'YEARLY', y0 = +start.slice(0, 4), m0 = +start.slice(5, 7);
+    const step = yearly ? 12 * r.interval : r.interval;
+    let k = 0;
+    if (skip && lo > start) {
+      const months = (+lo.slice(0, 4) - y0) * 12 + (+lo.slice(5, 7) - m0);
+      k = Math.max(0, Math.floor(months / step) - 1);
+    }
+    outer2: for (; guard++ < 5000; k++) {
+      const base = (y0 * 12 + m0 - 1) + k * step;
+      const months = yearly ? (r.bymonth.length ? r.bymonth.map(mm => Math.floor(base / 12) * 12 + mm - 1) : [base]) : [base];
+      for (const mm of months) {
+        for (const d of monthDays(r, Math.floor(mm / 12), mm % 12 + 1, start)) if (!take(d)) break outer2;
+      }
+    }
+  }
+  return out;
+}
+
+/** Occurrences of all events overlapping [from, to]: {e, date, endDate, s (minutes), en (minutes)} */
+function expand(events, from, to) {
+  const out = [];
+  events.forEach(e => {
+    const span = e.endDate && e.endDate > e.date ? (ymd(e.endDate) - ymd(e.date)) / DAY : 0;
+    occurrenceDates(e, from, to).forEach(d => {
+      const end = addDays(d, span);
+      if (end < from) return;
+      out.push({ e, date: d, endDate: end, s: mins(e.time), en: e.endTime ? mins(e.endTime) : mins(e.time) + 60 });
+    });
+  });
+  return out.sort((a, b) => (a.date + (a.e.allDay ? '' : a.e.time)) < (b.date + (b.e.allDay ? '' : b.e.time)) ? -1 : 1);
+}
+/* ===== end recurrence engine ===== */
+
+let META = { colors: {}, presets: {}, suggestions: [], guests: [], today: '' }, EVENTS = [];
+const state = { view: 'list', cursor: '', color: 'blue', edit: null, guestsKnown: true, saving: false, submitId: '' };
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hex = name => META.colors[name] || META.colors.blue || '#1e6fbf';
+/** readable text colour on a coloured background */
+const ink = h => { const n = parseInt(h.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#222' : '#fff'; };
+/** v2.1 soft colours: List rows, Week blocks and Month chips all use the colour at 0x22/255 (about 13%)
+ *  on white, made solid so hour lines, overlaps and the tinted page background don't show through.
+ *  Dark text for readability, plus a 3px left edge in the full colour so groups stay easy to tell apart. */
+const soft = h => { const n = parseInt(h.slice(1), 16), a = 0x22 / 255, m = c => Math.round(255 + (c - 255) * a);
+  return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(c => m(c).toString(16).padStart(2, '0')).join(''); };
+const softStyle = h => 'background:' + soft(h) + ';color:#222;border-left:3px solid ' + h;
+const visible = () => EVENTS.filter(e => !($('hideFamily').checked && e.category === 'family') &&
+                                          !($('hidePersonal').checked && e.category !== 'family'));   // v2.1: Hide personal
+const fmtDay = (d, o) => new Date(ymd(d)).toLocaleDateString(undefined, Object.assign({ timeZone: 'UTC' }, o));
+const weekStart = d => addDays(d, -dow(d));   // v2.3: weeks run Sunday–Saturday (Sunday = leftmost column)
+
+function render() {
+  ['list', 'week', 'month'].forEach(v => $(v).classList.toggle('hide', state.view !== v));
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === state.view));
+  $('nav').classList.toggle('show', state.view !== 'list');
+  $('pastWrap').classList.toggle('hide', state.view !== 'list');
+  if (state.view === 'list') renderList(); else if (state.view === 'week') renderWeek(); else renderMonth();
+}
+
+/* ----- List: today onwards (or everything with Show past), recurring rows expanded ----- */
+function renderList() {
+  const today = META.today, evs = visible();
+  const maxDate = evs.reduce((m, e) => (e.endDate || e.date) > m ? (e.endDate || e.date) : m, addDays(today, 365));
+  const from = $('showPast').checked ? evs.reduce((m, e) => e.date < m ? e.date : m, today) : today;
+  const to = maxDate < addDays(today, 730) ? maxDate : addDays(today, 730);  // recurring series shown up to 2 years ahead
+  const occ = expand(evs, from, to), groups = {};
+  occ.forEach(o => { const d = o.date < from ? from : o.date; (groups[d] = groups[d] || []).push(o); });
+  const days = Object.keys(groups).sort();
+  $('list').innerHTML = days.length ? days.map(d =>
+    '<section class="day' + (d === today ? ' today' : '') + '"><h2>' + esc(fmtDay(d, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })) + (d === today ? ' · Today' : '') + '</h2>' +
+    groups[d].map(o => { const e = o.e, h = hex(e.color);
+      return '<div class="ev" data-id="' + esc(e.id) + '" data-date="' + esc(o.date) + '" style="border-color:' + h + ';background:' + soft(h) + '"><div class="time">' +
+        (e.allDay ? 'All day' : esc(e.time) + (e.endTime ? '–' + esc(e.endTime) : '')) + (o.endDate > o.date ? '<br><span class="muted">to ' + esc(fmtDay(o.endDate, { month: 'short', day: 'numeric' })) + '</span>' : '') + '</div><div class="body">' +
+        '<div class="title">' + esc(e.title) + '<span class="badge">' + esc(e.category) + '</span>' + (e.recurrence ? '<span class="badge">repeats</span>' : '') + (e._pending ? '<span class="badge pend">⏳ syncing</span>' : '') + '</div>' +
+        (e.description ? '<div class="meta">' + esc(e.description) + '</div>' : '') + '</div></div>'; }).join('') +
+    '</section>').join('') : '<p>No events to show.</p>';
+  $('list').querySelectorAll('.ev[data-id]').forEach(el => el.onclick = () => tapEvent(el.dataset.id, el.dataset.date));
+  $('status').textContent = occ.length + ' shown / ' + EVENTS.length + ' rows';
+}
+
+/* ----- Week: Sun–Sat columns, 40px per hour, blocks sized by duration ----- */
+function renderWeek() {
+  const PX = 40 / 60, ws = weekStart(state.cursor), days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(ws, i)), we = days[6];   // Sun … Sat
+  $('rangeLabel').textContent = fmtDay(ws, { month: 'short', day: 'numeric' }) + ' – ' + fmtDay(we, { month: 'short', day: 'numeric', year: 'numeric' });
+  const occ = expand(visible(), ws, we), allDay = {}, timed = {};
+  days.forEach(d => { allDay[d] = []; timed[d] = []; });
+  const spans = [];   // v2.4: multi-day events (all-day or timed) = one continuous bar in the top strip
+  occ.forEach(o => {
+    if (o.endDate > o.date) { spans.push(o); return; }
+    if (o.e.allDay) { days.forEach(d => { if (d >= o.date && d <= o.endDate) allDay[d].push(o); }); return; }
+    // timed: one segment per day it touches (overnight events continue next morning)
+    days.forEach(d => {
+      if (d < o.date || d > o.endDate) return;
+      const s = d === o.date ? o.s : 0, en = d === o.endDate ? Math.max(o.en, s + 20) : 1440;
+      timed[d].push({ o, s, en: Math.min(en, 1440) });
+    });
+  });
+  const chip = o => { const h = hex(o.e.color); return '<div class="chip" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.date) + '" style="' + softStyle(h) + '" title="' + esc(o.e.title) + '">' + esc(o.e.title) + '</div>'; };
+  const used = [[], [], [], [], [], [], []], bars = [];
+  spans.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.endDate > b.endDate ? -1 : a.endDate < b.endDate ? 1 : 0)).forEach(o => {
+    const c0 = Math.max(0, Math.round((ymd(o.date) - ymd(ws)) / DAY)), c1 = Math.min(6, Math.round((ymd(o.endDate) - ymd(ws)) / DAY));
+    let lane = 0; const busy = r => { for (let c = c0; c <= c1; c++) if (used[c][r]) return true; return false; };
+    while (busy(lane)) lane++;
+    for (let c = c0; c <= c1; c++) used[c][lane] = true;
+    bars.push({ o, c0, c1, lane });
+  });
+  const lanes = bars.reduce((m, b) => Math.max(m, b.lane + 1), 0);
+  const barHtml = b => { const e = b.o.e, h = hex(e.color);
+    return '<div class="wk-bar' + (b.o.date < ws ? ' cl' : '') + (b.o.endDate > we ? ' cr' : '') + '" data-id="' + esc(e.id) + '" data-date="' + esc(b.o.date) + '" style="grid-column:' + (b.c0 + 2) + ' / ' + (b.c1 + 3) + ';grid-row:' + (b.lane + 1) + ';' + softStyle(h) + '" title="' + esc(e.title) + '">' +
+      (e.allDay || b.o.date < ws ? '' : '<b>' + esc(e.time) + '</b> ') + esc(e.title) + '</div>'; };
+  let html = '<div class="wk"><div class="wk-inner"><div class="wk-head"><div></div>' +
+    days.map(d => '<div class="' + (d === META.today ? 'today' : '') + '">' + esc(fmtDay(d, { weekday: 'short', day: 'numeric' })) + '</div>').join('') + '</div>' +
+    '<div class="wk-allday"><div class="muted" style="font-size:10px;grid-column:1;grid-row:1 / ' + (lanes + 2) + '">all day</div>' +
+    days.map((d, i) => '<div class="wk-ad-day" style="grid-column:' + (i + 2) + ';grid-row:1 / ' + (lanes + 2) + '"></div>').join('') +
+    bars.map(barHtml).join('') +
+    days.map((d, i) => '<div class="wk-ad-chips" style="grid-column:' + (i + 2) + ';grid-row:' + (lanes + 1) + '">' + allDay[d].map(chip).join('') + '</div>').join('') + '</div>' +
+    '<div class="wk-body" id="wkBody"><div class="wk-hours" style="height:960px">' +
+    Array.from({ length: 24 }, (_, h) => '<div style="top:' + h * 40 + 'px">' + String(h).padStart(2, '0') + ':00</div>').join('') + '</div>';
+  days.forEach(d => {
+    const segs = timed[d].sort((a, b) => a.s - b.s || b.en - a.en);
+    // simple overlap layout: lanes inside clusters of overlapping blocks
+    let cluster = [], clusterEnd = -1;
+    const flush = () => { const lanes = cluster.reduce((m, x) => Math.max(m, x.lane + 1), 1); cluster.forEach(x => x.lanes = lanes); cluster = []; };
+    segs.forEach(x => {
+      if (x.s >= clusterEnd) { flush(); clusterEnd = -1; }
+      const used = new Set(cluster.filter(y => y.en > x.s).map(y => y.lane));
+      x.lane = 0; while (used.has(x.lane)) x.lane++;
+      cluster.push(x); clusterEnd = Math.max(clusterEnd, x.en);
+    });
+    flush();
+    html += '<div class="wk-col' + (d === META.today ? ' today' : '') + '">' +
+      Array.from({ length: 24 }, (_, h) => '<div class="hr" style="top:' + h * 40 + 'px"></div>').join('') +
+      segs.map(x => { const e = x.o.e, h = hex(e.color), w = 100 / x.lanes;
+        return '<div class="blk" data-id="' + esc(e.id) + '" data-date="' + esc(x.o.date) + '" style="top:' + x.s * PX + 'px;height:' + Math.max(14, (x.en - x.s) * PX) + 'px;left:' + x.lane * w + '%;width:' + w + '%;' + softStyle(h) + '" title="' + esc(e.title + ' ' + e.time + (e.endTime ? '–' + e.endTime : '')) + '">' +
+          '<b>' + esc(e.time) + '</b> ' + esc(e.title) + '</div>'; }).join('') +
+      (d === META.today ? '<div class="now" style="top:' + nowMinutes() * PX + 'px"></div>' : '') + '</div>';
+  });
+  $('week').innerHTML = html + '</div></div></div>';
+  $('week').querySelectorAll('[data-id]').forEach(el => el.onclick = () => { if (!justSwiped()) tapEvent(el.dataset.id, el.dataset.date); });
+  // swipe only where the week grid isn't scrolled sideways (narrow phones keep native horizontal scrolling)
+  const wk = $('week').querySelector('.wk'); $('week').style.touchAction = wk && wk.scrollWidth > wk.clientWidth + 1 ? '' : 'pan-y';
+  $('wkBody').scrollTop = 7 * 40;                   // start the view at 07:00
+  $('status').textContent = occ.length + ' this week';
+}
+function nowMinutes() { const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Helsinki', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()); return mins(p); }
+
+/* ----- Month: 6-week grid from Sunday (Sun–Sat rows), titles only, coloured ----- */
+function renderMonth() {
+  const first = state.cursor.slice(0, 8) + '01', start = weekStart(first), end = addDays(start, 41), m = first.slice(0, 7);
+  $('rangeLabel').textContent = fmtDay(first, { month: 'long', year: 'numeric' });
+  const occ = expand(visible(), start, end), byDay = {}, marks = {};
+  // v2.2: multi-day all-day events are drawn as one spanning bar per week row (rows break Saturday | Sunday), plus a small dot in each day they cover
+  const isBar = o => o.endDate > o.date;   // v2.4: timed multi-day events too (one continuous bar, not a chip per day)
+  occ.forEach(o => { for (let d = o.date < start ? start : o.date; d <= o.endDate && d <= end; d = addDays(d, 1)) { const box = isBar(o) ? marks : byDay; (box[d] = box[d] || []).push(o); } });
+  // v2.3: every day cell is laid out by its OWN events. A bar holds a row only on the days it covers (same row on all
+  // of them, so it stays one continuous bar); every other day fills its own items into its lowest free rows.
+  // Up to ROWS rows per cell (bars passing through count), the rest = '+N more' (tap = day preview).
+  const ROWS = 5, ROW = 16, TOP = 20;   // px: row height; top of row 0 inside the week (cell padding + day-number line)
+  const dayOrder = d => o => o.e.allDay ? -1 : o.date < d ? 0 : o.s;   // all-day first, then by time (carried-over overnight at 0:00)
+  let html = '<div class="mo"><div class="mo-dows">' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(x => '<div class="dow">' + x + '</div>').join('') + '</div>';
+  for (let w = 0; w < 6; w++) {
+    const ws = addDays(start, 7 * w), we = addDays(ws, 6), used = [[], [], [], [], [], [], []], segs = [];
+    occ.filter(o => isBar(o) && o.date <= we && o.endDate >= ws)
+      .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.endDate > b.endDate ? -1 : a.endDate < b.endDate ? 1 : 0))
+      .forEach(o => {
+        const c0 = Math.round((ymd(o.date < ws ? ws : o.date) - ymd(ws)) / DAY), c1 = Math.round((ymd(o.endDate > we ? we : o.endDate) - ymd(ws)) / DAY);
+        let row = 0; const busy = r => { for (let c = c0; c <= c1; c++) if (used[c][r]) return true; return false; };
+        while (busy(row)) row++;                                   // lowest row free on ALL of its days (only those days)
+        for (let c = c0; c <= c1; c++) used[c][row] = true;
+        segs.push({ o, c0, c1, row });
+      });
+    html += '<div class="mo-week">';
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(ws, i), ord = dayOrder(d), mk = marks[d] || [];
+      const items = (byDay[d] || []).slice().sort((a, b) => ord(a) - ord(b) || (a.e.title < b.e.title ? -1 : a.e.title > b.e.title ? 1 : 0));
+      let slots = '', k = 0, hidden = segs.filter(x => x.row >= ROWS && i >= x.c0 && i <= x.c1).length;
+      for (let r = 0; r < ROWS; r++) {
+        if (used[i][r]) { slots += '<div class="slot"></div>'; continue; }   // a bar passes through this row today
+        const o = items[k++];
+        if (!o) { slots += '<div class="slot"></div>'; continue; }
+        const h = hex(o.e.color);
+        slots += '<div class="chip slot" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.date) + '" style="' + softStyle(h) + '" title="' + esc((o.e.allDay ? '' : o.e.time + ' ') + o.e.title) + '">' + esc(o.e.title) + '</div>';
+      }
+      hidden += Math.max(0, items.length - k);
+      html += '<div class="cell' + (d.slice(0, 7) !== m ? ' other' : '') + (d === META.today ? ' today' : '') + '" data-day="' + d + '"><div class="numline"><span class="num">' + (+d.slice(8)) + '</span>' +
+        (mk.length ? '<span class="marks">' + mk.map(o => '<i class="mk" style="background:' + hex(o.e.color) + '" title="' + esc(o.e.title) + '"></i>').join('') + '</span>' : '') + '</div>' +
+        slots + (hidden ? '<div class="more">+' + hidden + ' more</div>' : '') + '</div>';
+    }
+    html += segs.filter(x => x.row < ROWS).map(x => { const h = hex(x.o.e.color);
+      return '<div class="bar' + (x.o.date < ws ? ' cl' : '') + (x.o.endDate > we ? ' cr' : '') + '" data-id="' + esc(x.o.e.id) + '" data-date="' + esc(x.o.date) + '" data-row="' + x.row + '" data-ws="' + ws + '" data-c0="' + x.c0 + '" data-c1="' + x.c1 + '" style="left:calc(' + x.c0 + ' * 100% / 7 + 2px);width:calc(' + (x.c1 - x.c0 + 1) + ' * 100% / 7 - 4px);top:' + (TOP + x.row * ROW) + 'px;' + softStyle(h) + '" title="' + esc(x.o.e.title) + '">' + esc(x.o.e.title) + '</div>'; }).join('') + '</div>';
+  }
+  $('month').innerHTML = html + '</div>';
+  // v2.4: ANY tap in a day (empty space, a chip, '+N more' or a spanning bar) opens only that day's preview;
+  // the edit screen / series chooser opens from an event tapped inside the preview.
+  $('month').querySelectorAll('.cell').forEach(c => c.onclick = () => { if (!justSwiped()) openDay(c.dataset.day); });
+  $('month').querySelectorAll('.bar').forEach(el => el.onclick = ev => { ev.stopPropagation(); if (!justSwiped()) openDay(barDay(el, ev)); });
+  $('status').textContent = occ.length + ' this view';
+}
+
+/** v2.4: the day under a tap on a Month bar: from the tap's x-position in its week row (else the cell under the
+ *  finger, else the bar's first day), always one of the days the bar covers. */
+function barDay(el, ev) {
+  const ws = el.dataset.ws, c0 = +el.dataset.c0, c1 = +el.dataset.c1;
+  let col = null;
+  const row = el.parentNode, r = row && row.getBoundingClientRect ? row.getBoundingClientRect() : null;
+  if (ev && r && r.width > 0 && typeof ev.clientX === 'number') col = Math.floor((ev.clientX - r.left) / (r.width / 7));
+  if (col === null && ev && document.elementsFromPoint) {
+    const cell = document.elementsFromPoint(ev.clientX, ev.clientY).find(x => x.classList && x.classList.contains('cell'));
+    if (cell) col = Math.round((ymd(cell.dataset.day) - ymd(ws)) / DAY);
+  }
+  if (col === null || isNaN(col)) col = c0;
+  return addDays(ws, Math.min(c1, Math.max(c0, col)));
+}
+
+function shift(dir) {
+  if (state.view === 'week') state.cursor = addDays(state.cursor, 7 * dir);
+  else { const y = +state.cursor.slice(0, 4), mo = +state.cursor.slice(5, 7) - 1 + dir; state.cursor = iso(Date.UTC(y, mo, 1)); }
+  render(); slide(dir);
+}
+/** v2.2: short slide in the direction of travel (next = from the right, previous = from the left). */
+function slide(dir) {
+  if (!dir || state.view === 'list') return;
+  const el = $(state.view); el.classList.remove('slide-l', 'slide-r'); void el.offsetWidth;
+  el.classList.add(dir > 0 ? 'slide-l' : 'slide-r');
+}
+function goToday() {
+  const key = d => state.view === 'week' ? weekStart(d) : d.slice(0, 7), from = key(state.cursor), to = key(META.today);
+  state.cursor = META.today; render(); slide(to > from ? 1 : to < from ? -1 : 0);
+}
+
+/* ----- v2.2: swipe left/right in Month and Week (touch, pen, or mouse drag) ----- */
+const SWIPE = { min: 50, ratio: 1.5, maxMs: 1000 };   // px; |dx| must beat 1.5 x |dy| so vertical scrolling still works
+let swipeStart = null, suppressClickUntil = 0;
+function onSwipeStart(ev) {
+  if (ev.isPrimary === false || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+  swipeStart = { x: ev.clientX, y: ev.clientY, t: Date.now(), view: state.view };
+}
+function onSwipeEnd(ev) {
+  const s0 = swipeStart; swipeStart = null;
+  if (!s0 || s0.view !== state.view) return;
+  const dx = ev.clientX - s0.x, dy = ev.clientY - s0.y;
+  if (Math.abs(dx) < SWIPE.min || Math.abs(dx) < SWIPE.ratio * Math.abs(dy) || Date.now() - s0.t > SWIPE.maxMs) return;
+  suppressClickUntil = Date.now() + 400;               // the click that follows a swipe must not open a day / event
+  shift(dx < 0 ? 1 : -1);                              // swipe left = next, swipe right = previous
+}
+['month', 'week'].forEach(id => $(id).addEventListener('pointerdown', onSwipeStart));
+window.addEventListener('pointerup', onSwipeEnd);
+window.addEventListener('pointercancel', () => { swipeStart = null; });
+/** True (once) for the click a browser fires at the end of a swipe/drag – also when it lands on the old, replaced page. */
+function justSwiped() { if (Date.now() < suppressClickUntil) { suppressClickUntil = 0; return true; } return false; }
+document.addEventListener('click', ev => {   // only the one click that ends the swipe, and only inside Month / Week
+  if (Date.now() < suppressClickUntil && ev.target.closest && ev.target.closest('#month, #week')) { suppressClickUntil = 0; ev.stopPropagation(); ev.preventDefault(); }
+}, true);
+
+/* ----- add-event form ----- */
+const form = $('addForm');
+function isFamily() { return $('category').value === 'family'; }
+function isBoth() { return $('category').value === 'both'; }          // v2.3 Duplicate (Both)
+function currentColor() { return isFamily() ? META.familyColor : state.color; }   // Both: the personal colour (family copy is always orange)
+const hasPrefix = t => /^[A-Za-z]\s*[:：]/.test(t);
+/** v2.3 family title of a duplicate: 'C: ' added if missing, never doubled (the server does the same). */
+const dupFamilyTitle = t => { t = String(t || '').trim(); return !t || hasPrefix(t) ? t : META.familyPrefix + ' ' + t; };
+
+function buildSwatches() {
+  $('swatches').innerHTML = Object.keys(META.colors).filter(c => c !== META.familyColor).map(c =>
+    '<button type="button" class="sw' + (c === state.color ? ' on' : '') + '" data-c="' + c + '" title="' + c + '" style="background:' + META.colors[c] + '"></button>').join('');
+  $('swatches').querySelectorAll('.sw').forEach(b => b.onclick = () => { state.color = b.dataset.c; buildSwatches(); buildPresets(); });
+}
+function buildPresets() {   // quick title chips for the chosen colour (family: C: presets)
+  const c = currentColor(), h = hex(c), list = META.presets[c] || [];
+  $('presetRow').innerHTML = list.length ? '<span class="muted">Quick:</span>' + list.map(t =>
+    '<button type="button" class="pchip" style="border-color:' + h + ';color:' + (ink(h) === '#fff' ? h : '#222') + '">' + esc(t) + '</button>').join('') : '';
+  $('presetRow').querySelectorAll('.pchip').forEach(b => b.onclick = () => { $('title').value = b.textContent; hideSugg(); });
+  buildFamPresets();
+}
+/** v2.4 update: Duplicate (Both) family title gets the same quick chips – the family (C:) presets, same code as above. */
+function buildFamPresets() {
+  const c = META.familyColor, h = hex(c), list = META.presets[c] || [];
+  $('famPresetRow').innerHTML = list.length ? '<span class="muted">Quick:</span>' + list.map(t =>
+    '<button type="button" class="pchip" style="border-color:' + h + ';color:' + (ink(h) === '#fff' ? h : '#222') + '">' + esc(t) + '</button>').join('') : '';
+  $('famPresetRow').querySelectorAll('.pchip').forEach(b => b.onclick = () => { $('familyTitle').value = b.textContent; hideSugg(); });
+}
+function onCategory() {
+  const fam = isFamily(), both = isBoth(), t = $('title').value;
+  $('colorRow').classList.toggle('hide', fam);
+  $('guestRow').classList.toggle('hide', !fam && !both);
+  $('famRow').classList.toggle('hide', !both);
+  $('famPresetRow').classList.toggle('hide', !both);
+  $('title').placeholder = both ? 'Personal title' : 'Title';
+  if (both && !$('familyTitle').value && hasPrefix(t)) $('familyTitle').value = t;   // e.g. editing a family row: its title becomes the family title
+  if (fam && t && !hasPrefix(t)) $('title').value = META.familyPrefix + t;
+  if (!fam && t.indexOf(META.familyPrefix) === 0) $('title').value = t.slice(META.familyPrefix.length).replace(/^\s+/, '');
+  buildPresets();
+}
+$('familyTitle').addEventListener('blur', () => { $('familyTitle').value = dupFamilyTitle($('familyTitle').value); });
+
+/* title auto-suggest: common titles that START with what was typed (case-insensitive) */
+let suggIdx = -1;
+const suggBox = id => id === 'familyTitle' ? 'famSugg' : 'sugg';   // v2.4 update: family title uses the same list
+function showSugg(ev) {
+  const id = ev && ev.target && ev.target.id === 'familyTitle' ? 'familyTitle' : 'title', box = $(suggBox(id));
+  const raw = $(id).value, fam = id === 'familyTitle' || isFamily();
+  const q = (fam && raw.indexOf(META.familyPrefix) === 0 ? raw.slice(META.familyPrefix.length) : raw).trim().toLowerCase();
+  if (!q) return hideSugg();
+  const strip = t => t.replace(/^[A-Za-z]\s*[:：]\s*/, '');
+  const seen = new Set(), items = [];
+  META.suggestions.forEach(t => {
+    const base = fam ? strip(t) : t;
+    if (!base.toLowerCase().startsWith(q) || base.toLowerCase() === q) return;
+    const val = fam ? META.familyPrefix + base : t;
+    if (!seen.has(val) && items.length < 8) { seen.add(val); items.push(val); }
+  });
+  suggIdx = -1;
+  box.innerHTML = items.map(t => '<div>' + esc(t) + '</div>').join('');
+  box.style.display = items.length ? 'block' : 'none';
+  box.querySelectorAll('div').forEach(d => d.onmousedown = ev => { ev.preventDefault(); $(id).value = d.textContent; hideSugg(); });
+}
+function hideSugg() { $('sugg').style.display = 'none'; $('famSugg').style.display = 'none'; suggIdx = -1; }
+['title', 'familyTitle'].forEach(id => {
+  $(id).addEventListener('input', showSugg);
+  $(id).addEventListener('blur', () => setTimeout(hideSugg, 100));
+  $(id).addEventListener('keydown', ev => {
+    const box = $(suggBox(id)), items = box.querySelectorAll('div'); if (box.style.display !== 'block' || !items.length) return;
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); suggIdx = (suggIdx + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items.forEach((d, i) => d.classList.toggle('act', i === suggIdx)); }
+    else if (ev.key === 'Enter' && suggIdx >= 0) { ev.preventDefault(); $(id).value = items[suggIdx].textContent; hideSugg(); }
+    else if (ev.key === 'Escape') hideSugg();
+  });
+});
+
+/* repeat options: labels follow the chosen date, e.g. "on day 27" / "on the 4th Tuesday" */
+function updateRepeat() {
+  const f = $('freq').value, date = $('date').value;
+  $('repOpts').classList.toggle('hide', f === 'none' || f === 'keep');   // v2.2 'keep' = leave the series rule as it is
+  $('unit').textContent = { weekly: 'week(s)', monthly: 'month(s)', yearly: 'year(s)' }[f] || '';
+  $('mode').classList.toggle('hide', f !== 'monthly' && f !== 'yearly');
+  if (date) {
+    const day = +date.slice(8), n = Math.ceil(day / 7), wdName = fmtDay(date, { weekday: 'long' });
+    const ord = n === 5 ? 'last' : ['1st', '2nd', '3rd', '4th'][n - 1];
+    const mon = fmtDay(date, { month: 'short' });
+    $('mode').options[0].text = f === 'yearly' ? 'on ' + mon + ' ' + day : 'on day ' + day;
+    $('mode').options[1].text = 'on the ' + ord + ' ' + wdName + (f === 'yearly' ? ' of ' + mon : '');
+  }
+  $('count').classList.toggle('hide', $('ends').value !== 'count');
+  $('until').classList.toggle('hide', $('ends').value !== 'until');
+}
+['freq', 'date', 'ends'].forEach(id => $(id).addEventListener('change', updateRepeat));
+
+$('category').onchange = onCategory;
+$('addBtn').onclick = () => {
+  if (state.edit) { openAdd(state.view === 'list' ? META.today : state.cursor); return; }
+  form.classList.toggle('open'); if (!$('date').value) $('date').value = state.view === 'list' ? META.today : state.cursor; updateRepeat();
+};
+$('cancelBtn').onclick = () => { form.classList.remove('open'); if (state.edit) clearForm(); };
+
+/* ----- v2.2: edit screen (the add form, pre-filled) ----- */
+function setVal(n, v) { form.elements.namedItem(n).value = v; }
+/* v2.3: edit screen only – changing the start time moves the end time by the same amount (duration kept),
+ * like dragging one block. Past midnight the end date rolls forward / back; the end is never before the start.
+ * Changing the end time by hand still works and just gives a new duration. */
+let prevStart = '';   // start time before the latest change (set when the edit screen is filled)
+function onStartTimeChange() {
+  const el = n => form.elements.namedItem(n), s = el('startTime').value, old = prevStart;
+  if (s) prevStart = s;
+  if (!state.edit || !old || !s || s === old || el('allDay').checked) return;
+  const en = el('endTime').value; if (!en) return;
+  const date = el('date').value, endDateEl = el('endDate');
+  const dayOff = date && endDateEl && endDateEl.value > date ? Math.round((ymd(endDateEl.value) - ymd(date)) / DAY) : 0;
+  const start = mins(s), end = Math.max(start, dayOff * 1440 + mins(en) + start - mins(old));   // never before the start
+  let off = Math.floor(end / 1440), t = end - off * 1440;
+  if (!endDateEl || !date) { if (off > 0) { off = 0; t = 1439; } }                               // no end date to roll: stop at 23:59
+  const hm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  el('endTime').value = hm(t);
+  if (endDateEl && date) endDateEl.value = off > 0 ? addDays(date, off) : '';
+}
+['change', 'input'].forEach(t => form.elements.namedItem('startTime').addEventListener(t, onStartTimeChange));   // 'change' = iOS wheel picker
+/** Back to a blank add form (also leaves edit mode). */
+function clearForm() {
+  state.edit = null; state.guestsKnown = true; prevStart = ''; state.submitId = newSubmitId();
+  form.reset(); setKeepOption(null); $('freq').disabled = false;
+  $('editHead').classList.add('hide'); $('formDelBtn').classList.add('hide'); $('saveBtn').textContent = 'Save'; $('formDelBtn').textContent = 'Delete';
+  resetGuests(); onCategory(); updateRepeat();
+}
+/** v2.4: one id per Save – the server ignores the same id a second time (a double tap makes ONE event). */
+function newSubmitId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+/** v2.4 busy guard: while a save runs, Save is disabled and shows "Saving…"; more taps do nothing. */
+function setSaving(on) {
+  const b = $('saveBtn');
+  if (on) { state.saveLabel = b.textContent; b.textContent = 'Saving…'; }
+  else if (state.saving) b.textContent = state.saveLabel || 'Save';
+  state.saving = on; b.disabled = on;
+}
+/** Add form with a date filled in (Month day preview "+ Add"). */
+function openAdd(date) {
+  hidePop(); clearForm(); setVal('date', date); updateRepeat();
+  form.classList.add('open'); showForm(false);   // v2.4 update: Add no longer focuses the title either
+}
+/** Brings the form into view. v2.4: neither Edit nor Add (any entry point) focuses or selects a field,
+ *  so the iPhone keyboard stays down until Caleb taps a field himself. */
+function showForm(focusTitle) {
+  if (!focusTitle) { const a = document.activeElement; if (a && a !== document.body && a.blur && form.contains(a)) a.blur(); }
+  if (form.scrollIntoView) form.scrollIntoView({ block: 'start' });   // scrolling only – does not move focus
+}
+/** 'Keep current repeat' option, only while editing a repeating row. */
+function setKeepOption(e) {
+  const old = $('freq').querySelector('option[value=keep]'); if (old) old.remove();
+  if (!e || !e.recurrence) return;
+  const o = document.createElement('option'); o.value = 'keep'; o.textContent = 'Keep current repeat (' + repeatSummary(e.recurrence) + ')';
+  $('freq').insertBefore(o, $('freq').firstChild);
+}
+function repeatSummary(text) {
+  const r = parseRule(text); if (!r) return 'custom';
+  const unit = { DAILY: 'day', WEEKLY: 'week', MONTHLY: 'month', YEARLY: 'year' }[r.freq];
+  return (r.interval > 1 ? 'every ' + r.interval + ' ' + unit + 's' : { DAILY: 'daily', WEEKLY: 'weekly', MONTHLY: 'monthly', YEARLY: 'yearly' }[r.freq]) +
+    (r.count ? ', ' + r.count + ' times' : r.until ? ', until ' + r.until : '');
+}
+/** v2.3: an app-made repeating series (one Sheet row with an RRULE) asks "Only this event / All events" first. */
+const isAppSeries = e => !!(e && e.recurrence && String(e.recurrence).indexOf('RRULE:') === 0 && !e.gcalOccurrence);
+/** Tap on an event anywhere (List, Week, Month chip / bar, day preview). date = the tapped occurrence. */
+function tapEvent(id, date) {
+  const e = findEvent(id);
+  if (isAppSeries(e) && date) return openScope(e, date);
+  openEdit(id);
+}
+const whenText = e => e.allDay ? 'all day' : e.time + (e.endTime ? '–' + e.endTime : '');
+/** v2.3 chooser popup: two big buttons (thumb-sized on a phone) + Cancel. */
+function openScope(e, date) {
+  const long = d => fmtDay(d, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  $('pop').style.borderTopColor = hex(e.color);
+  $('pop').innerHTML = '<h3>Repeating event</h3><div class="scope-sub"><b>' + esc(e.title) + '</b> · ' + esc(long(date)) + '</div>' +
+    '<button type="button" class="scope-btn" id="scopeThis"><b>Only this event</b><span>' + esc(long(date) + ', ' + whenText(e)) + ' – the other dates stay as they are</span></button>' +
+    '<button type="button" class="scope-btn" id="scopeAll"><b>All events in the series</b><span>' + esc(repeatSummary(e.recurrence) + ', from ' + long(e.date)) + '</span></button>' +
+    '<div class="row center"><button type="button" id="scopeCancel">Cancel</button></div>';
+  $('scopeThis').onclick = () => openEdit(e.id, { scope: 'this', date });
+  $('scopeAll').onclick = () => openEdit(e.id, { scope: 'all', date });
+  $('scopeCancel').onclick = hidePop;
+  $('popBack').classList.remove('hide');
+}
+/** Opens the edit screen for the Sheet row `id`. A repeating series: opt.scope 'all' (default: the whole series,
+ *  pre-filled from the series start) or 'this' (only opt.date, pre-filled with that date; repeat switched off). */
+function openEdit(id, opt) {
+  const e = findEvent(id);
+  if (!e) { $('status').textContent = 'Error: that event is no longer loaded. Reload the page.'; return; }
+  hidePop(); clearForm();
+  const scope = isAppSeries(e) ? (opt && opt.scope === 'this' && opt.date ? 'this' : 'all') : null;
+  state.edit = { id: e.id, title: e.title, e, scope, occurrence: scope ? (opt && opt.date) || e.date : null };
+  $('category').value = e.category;
+  if (e.category !== 'family') state.color = META.colors[e.color] ? e.color : META.defaultColor;
+  buildSwatches(); onCategory();
+  setVal('title', e.title); setVal('date', e.date); setVal('description', e.description || '');
+  form.elements.namedItem('allDay').checked = !!e.allDay;
+  setVal('startTime', e.allDay ? '' : e.time); setVal('endTime', e.allDay ? '' : (e.endTime || ''));
+  setVal('endDate', e.endDate && e.endDate > e.date ? e.endDate : '');
+  prevStart = e.allDay ? '' : (e.time || '');   // v2.3: base for moving the end time with the start time
+  setKeepOption(e); $('freq').value = e.recurrence ? 'keep' : 'none';
+  $('freq').disabled = !!e.gcalOccurrence;
+  if (scope === 'this') {   // only this date: that date (multi-day keeps its length), no repeat
+    const d = state.edit.occurrence, span = e.endDate && e.endDate > e.date ? (ymd(e.endDate) - ymd(e.date)) / DAY : 0;
+    setVal('date', d); setVal('endDate', span ? addDays(d, span) : '');
+    setKeepOption(null); $('freq').value = 'none'; $('freq').disabled = true;
+  }
+  updateRepeat();
+  const notes = [];
+  if (scope === 'this') notes.push('Only this event (' + fmtDay(state.edit.occurrence, { weekday: 'short', day: 'numeric', month: 'short' }) + '): the other dates of the series stay as they are.');
+  else if (e.recurrence) notes.push('All events in the series: changes apply to every date (the date shown is the first one).');
+  if (e.gcalOccurrence) notes.push('One date of a series made in Google Calendar: only this date changes.');
+  if (e.gcal) notes.push('Also updates Google Calendar.');
+  $('editNote').textContent = notes.join(' ');
+  $('editHead').classList.remove('hide'); $('formDelBtn').classList.remove('hide'); $('saveBtn').textContent = 'Save changes';
+  $('editHead').querySelector('.ttl').textContent = scope === 'this' ? 'Edit this event' : scope === 'all' ? 'Edit all events' : 'Edit event';
+  $('formDelBtn').textContent = scope === 'this' ? 'Delete this event' : scope === 'all' ? 'Delete series' : 'Delete';
+  if (e.category === 'family' && e.gcal) loadGuests(e.id);
+  form.classList.add('open'); showForm(false);   // v2.4: no focus, no keyboard
+}
+/** Ticks the family members who are guests on the Google Calendar event; until known, guests are left unchanged. */
+function loadGuests(id) {
+  state.guestsKnown = false;
+  $('guestBox').querySelectorAll('input').forEach(x => { x.checked = false; x.disabled = true; });
+  // V3: asked from the server when online; offline the boxes stay unticked and guests are left as they are
+  ENG.call('guests', [id], 20000).then(r => {
+    r = r || {};
+    if (!state.edit || state.edit.id !== id) return;
+    $('guestBox').querySelectorAll('input').forEach(x => { x.disabled = false; if (r.ok) x.checked = r.guests.indexOf(x.value) >= 0; });
+    state.guestsKnown = !!r.ok;
+  }).catch(() => { $('guestBox').querySelectorAll('input').forEach(x => { x.disabled = false; }); });
+}
+$('formDelBtn').onclick = () => { if (state.edit) askDelete(state.edit.id, state.edit.occurrence || state.edit.e.date, state.edit.scope); };
+
+form.onsubmit = ev => {
+  ev.preventDefault();
+  if (state.saving) return;   // v2.4: a second tap while saving is ignored
+  if (!state.submitId) state.submitId = newSubmitId();
+  const f = form, v = n => f.elements.namedItem(n).value;   // elements by name (avoids clashes like form.title)
+  const data = {
+    title: v('title'), date: v('date'), startTime: v('startTime'), endTime: v('endTime'),
+    endDate: v('endDate'), allDay: f.elements.namedItem('allDay').checked, category: v('category'), color: currentColor(),
+    description: v('description'), familyTitle: dupFamilyTitle(v('familyTitle')),
+    guests: Array.from(f.querySelectorAll('input[name=guests]:checked')).map(x => x.value),
+    repeat: { freq: v('freq'), interval: v('interval'), mode: v('mode'), end: v('ends'), count: v('count'), until: v('until') },
+    submitId: state.submitId
+  };
+  if (data.category === 'both') {   // v2.3 Duplicate: both titles needed
+    if (!data.familyTitle) { $('status').textContent = 'Type a family title for the family copy (e.g. C: mom).'; $('familyTitle').focus(); return; }
+    $('familyTitle').value = data.familyTitle;
+  } else delete data.familyTitle;
+  if (state.edit) return saveEdit(data);
+  if (data.category !== 'personal' && !data.guests.length && !confirm('No family member is ticked, so nobody gets an invite. Save anyway?')) return;
+  const bad = CalSync.validate(data);
+  if (bad) { $('status').textContent = 'Error: ' + bad; return; }
+  // V3: saved on the phone at once; the Sheet / Google Calendar get it in the background
+  const msg = data.category === 'both' ? 'Saved 2 events: ' + data.title + ' + ' + data.familyTitle : 'Saved: ' + data.title;
+  ENG.enqueue('add', data).then(() => bgSync('write'));
+  state.submitId = newSubmitId();
+  f.reset(); f.classList.remove('open'); resetGuests(); onCategory(); updateRepeat();
+  refresh(msg + ' – syncing in the background'); toast('已記低 ✓ ' + (data.category === 'personal' ? '' : '（Google 日曆背景同步）'));
+};
+function saveEdit(data) {
+  const ed = state.edit, e = ed.e;
+  data.id = ed.id; data.originalTitle = ed.title;
+  if (ed.scope) { data.scope = ed.scope; data.occurrence = ed.occurrence; }   // v2.3
+  if (!state.guestsKnown && data.category !== 'personal' && e.category === 'family') data.guests = null;   // leave guests as they are
+  if (e.gcal && e.category === 'family' && data.category !== 'family' &&
+      !confirm('Moving "' + e.title + '" to Personal removes it from Google Calendar' + (e.source === 'new' ? ' (Mom/Dad/Brother get Google\'s cancellation e-mail)' : '') + '. Continue?')) return;
+  if (data.category !== 'personal' && data.guests && !data.guests.length && !(e.category === 'family' && e.gcal) &&
+      !confirm('No family member is ticked, so nobody gets an invite. Save anyway?')) return;
+  const bad = CalSync.validate(data);
+  if (bad) { $('status').textContent = 'Error: ' + bad; return; }
+  delete data.submitId;
+  ENG.enqueue('update', data).then(() => bgSync('write'));
+  form.classList.remove('open'); clearForm();
+  refresh('Saved changes' + (data.scope === 'this' ? ' (only ' + fmtDay(data.occurrence, { weekday: 'short', day: 'numeric', month: 'short' }) + ')' : e.recurrence ? ' (whole series)' : '') + ': ' + (data.title || '') + ' – syncing in the background');
+  toast('已記低 ✓');
+}
+function _v24SaveEditMessage(res) {   // V2.4 wording, kept for reference (not used by V3)
+    return ('Saved changes' + (res.scope === 'this' ? ' (only ' + fmtDay(res.day, { weekday: 'short', day: 'numeric', month: 'short' }) + ')' : res.series ? ' (whole series)' : '') + ': ' + res.title +
+      ({ updated: ' (Sheet + Google Calendar)', created: ' (Sheet; added to Google Calendar)', removed: ' (Sheet; removed from Google Calendar)',
+         'updated-one': ' (Sheet + that date in Google Calendar)', 'removed-one': ' (Sheet; that date removed from Google Calendar)' }[res.gcal] || ' (Sheet)') +
+      (res.copyId ? ' + new ' + res.copyCategory + ' copy: ' + res.copyTitle + (res.copyCategory === 'family' ? ' (Sheet + Google Calendar)' : ' (Sheet)') : ''));
+}
+function resetGuests() {   // all family members ticked by default
+  $('guestBox').innerHTML = META.guests.map(n => '<label><input type="checkbox" name="guests" value="' + esc(n) + '" checked> ' + esc(n) + '</label> ').join('');
+}
+
+/* ----- v2.4: Clean up duplicates – lists leftover copies first; deletes only after Caleb confirms ----- */
+$('dupBtn').onclick = () => {
+  if (!ENG.cfg.url) { openConn(); return; }
+  $('status').textContent = 'Looking for duplicates…';
+  ENG.call('findDuplicates', [], 120000).then(r => {
+    r = r || {};
+    if (!r.ok) { $('status').textContent = 'Error: ' + (r.error || 'could not check'); return; }
+    if (!r.items.length) { $('status').textContent = 'No duplicate Google Calendar events found.'; return; }
+    $('status').textContent = r.items.length + ' duplicate' + (r.items.length > 1 ? 's' : '') + ' found';
+    const list = r.items.map(x => '• ' + x.title + ' – ' + x.when + (x.repeats ? ' (repeats)' : '')).join('\n');
+    if (!confirm('These Google Calendar events are extra copies of events already in the calendar:\n\n' + list +
+      '\n\nDelete these copies? (The original events stay. Mom/Dad/Brother get Google\'s cancellation e-mail for each copy.)')) { $('status').textContent = 'Nothing deleted.'; return; }
+    $('status').textContent = 'Deleting duplicates…';
+    ENG.call('removeDuplicates', [r.items.map(x => x.id)], 180000).then(res => {
+      if (!res || !res.ok) { $('status').textContent = 'Error: ' + ((res && res.error) || 'clean-up failed'); return; }
+      const m = 'Removed ' + res.removed.length + ' duplicate' + (res.removed.length === 1 ? '' : 's') + (res.skipped.length ? ' (' + res.skipped.length + ' left – no longer a duplicate)' : '');
+      bgSync('manual').then(() => refresh(m));
+    }).catch(err => { $('status').textContent = 'Error: ' + err.message; });
+  }).catch(err => { $('status').textContent = 'Error: ' + err.message + (navigator.onLine ? '' : ' (offline – clean-up needs the internet)'); });
+};
+
+/* ----- v2.1 delete (v2.2: started from the edit screen) + v2.2 day preview ----- */
+const findEvent = id => EVENTS.find(e => String(e.id) === String(id));
+function hidePop() { $('popBack').classList.add('hide'); $('pop').innerHTML = ''; }
+$('popBack').onclick = ev => { if (ev.target === $('popBack')) hidePop(); };
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('popBack').classList.contains('hide')) hidePop(); });
+
+/** v2.2 Month day preview: that day's events (all-day first, then by time), Open week, + Add. */
+function openDay(d) {
+  const occ = expand(visible(), d, d).filter(o => o.date <= d && o.endDate >= d);
+  const startMin = o => o.e.allDay ? -1 : o.date < d ? 0 : o.s;
+  occ.sort((a, b) => (a.e.allDay === b.e.allDay ? 0 : a.e.allDay ? -1 : 1) || startMin(a) - startMin(b) || (a.e.title < b.e.title ? -1 : 1));
+  const when = o => {
+    if (o.e.allDay) return 'All day';
+    const s = o.date < d ? '' : o.e.time, en = o.endDate > d ? '' : (o.e.endTime || '');
+    return s && en ? s + '–' + en : s ? s + ' →' : en ? '→ ' + en : 'All day (continues)';
+  };
+  $('pop').style.borderTopColor = 'var(--accent)';
+  $('pop').innerHTML = '<h3>' + esc(fmtDay(d, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })) + (d === META.today ? ' · Today' : '') + '</h3>' +
+    (occ.length ? '<div class="dp-list">' + occ.map(o => { const h = hex(o.e.color);
+        return '<div class="dp-ev" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.date) + '" style="border-color:' + h + ';background:' + soft(h) + '"><span class="dp-time">' + esc(when(o)) + '</span><span><b>' + esc(o.e.title) + '</b>' +
+          (o.e.recurrence ? '<span class="badge">repeats</span>' : '') + '</span></div>'; }).join('') + '</div>'
+      : '<div class="dp-empty">No plans</div>') +
+    '<div class="row' + (occ.length ? '' : ' center') + '"><button type="button" id="popWeek">Open week</button>' +
+    '<button type="button" class="primary' + (occ.length ? '' : ' big') + '" id="popAdd">+ Add</button><button type="button" id="popClose">Close</button></div>';
+  $('pop').querySelectorAll('.dp-ev').forEach(el => el.onclick = () => tapEvent(el.dataset.id, el.dataset.date));
+  $('popWeek').onclick = () => { hidePop(); state.cursor = d; state.view = 'week'; render(); };
+  $('popAdd').onclick = () => openAdd(d);
+  $('popClose').onclick = hidePop;
+  $('popBack').classList.remove('hide');
+}
+
+/** The confirm text: names the event and says what else goes with it. */
+function deleteMessage(e, date, scope) {
+  if (scope === 'this') {   // v2.3: one date of an app-made series
+    const day = fmtDay(date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    return ['Delete only ' + day + ' of "' + e.title + '"?', 'The other dates of this repeating event stay.',
+      e.gcal ? 'That date is also removed from Google Calendar' + (e.source === 'new' ? ' (Mom/Dad/Brother get Google\'s cancellation e-mail for that date).' : '.') : '',
+      'This cannot be undone from this page.'].filter(Boolean).join('\n\n');
+  }
+  const lines = ['Delete "' + e.title + '"?'];
+  if (e.recurrence) lines.push('This is a repeating event: the WHOLE series (every date, past and future) will be deleted, not just ' + fmtDay(date, { month: 'short', day: 'numeric', year: 'numeric' }) + '.');
+  else if (e.gcalOccurrence) lines.push('This is one date of a repeating event made in Google Calendar: only this date is deleted.');
+  if (e.gcal) lines.push(e.category === 'family'
+    ? 'It is a family event, so it is also removed from Google Calendar' + (e.source === 'new' ? ' (Mom/Dad/Brother get Google\'s cancellation e-mail).' : '.')
+    : 'It is also removed from Google Calendar.');
+  else if (e.category === 'family') lines.push('It has not reached Google Calendar yet, so only the Sheet row is removed.');
+  lines.push('This cannot be undone from this page.');
+  return lines.join('\n\n');
+}
+
+/** id is the Sheet row id; for a repeating event every occurrence carries the series row's id. */
+function askDelete(id, date, scope) {
+  const e = findEvent(id);
+  if (!e) { $('status').textContent = 'Error: that event is no longer loaded. Reload the page.'; return; }
+  const one = scope === 'this' && isAppSeries(e) && date;
+  if (!confirm(deleteMessage(e, date || e.date, one ? 'this' : null))) return;
+  hidePop();
+  // V3: gone on the phone at once; the Sheet / Google Calendar follow in the background
+  ENG.enqueue('delete', one ? { id: e.id, title: e.title, scope: 'this', occurrence: date } : { id: e.id, title: e.title }).then(() => bgSync('write'));
+  if (state.edit && state.edit.id === e.id) { form.classList.remove('open'); clearForm(); }
+  refresh((one ? 'Deleted ' + fmtDay(date, { weekday: 'short', day: 'numeric', month: 'short' }) + ' only' : 'Deleted' + (e.recurrence ? ' series' : '')) + ': ' + e.title + ' – syncing in the background');
+  toast('已刪除 ✓');
+}
+
+/* ----- wiring & loading ----- */
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { state.view = b.dataset.view; render(); });
+$('prevBtn').onclick = () => shift(-1);
+$('nextBtn').onclick = () => shift(1);
+$('todayBtn').onclick = goToday;
+$('hideFamily').onchange = render;
+$('hidePersonal').onchange = render;
+$('showPast').onchange = render;
+
+/* ===================== V3: local-first engine glue (pill, Settings, Connection, toasts, triggers) ===================== */
+let ENG = null, started = false, shownVer = -1, lastMetaKey = '';
+function toast(msg, ms) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms || 2200); }
+const hhmm = ms => { if (!ms) return ''; const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+const whenFull = ms => ms ? new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '未同步 Never';
+
+/** Copies the engine's view (server copy + queued changes) into the V2.4 page globals and redraws. */
+function refresh(msg) {
+  const v = ENG.view();
+  EVENTS = v.events; META = v.meta; shownVer = ENG.ver;
+  if (!state.cursor) state.cursor = META.today;
+  if (!META.colors[state.color] || state.color === META.familyColor) state.color = META.defaultColor || 'blue';
+  const key = JSON.stringify([META.colors, META.presets, META.suggestions, META.guests]);
+  if (key !== lastMetaKey) { lastMetaKey = key; buildSwatches(); buildPresets(); if (!state.edit) resetGuests(); }
+  if (!$('guestBox').innerHTML) resetGuests();
+  render();
+  if (msg) $('status').textContent = msg;
+  else if (!ENG.status().configured) $('status').textContent = 'Not connected yet – tap 🔗 at the top right.';
+  else if (!ENG.status().hasData) $('status').textContent = 'First sync – loading the calendar…';
+}
+
+/* ----- top-right sync pill (same states / labels / tap as Vault V3) ----- */
+function renderPill() {
+  const s = ENG.status(), p = $('syncPill'), t = s.lastOkAt ? ' <small>· ' + hhmm(s.lastOkAt) + '</small>' : '';
+  let cls, txt;
+  if (!s.configured) { cls = 'bad'; txt = '🔗 未連線 Connect'; }
+  else if (s.failed) { cls = 'bad'; txt = '⚠️ ' + s.failed + ' 項失敗'; }
+  else if (s.state === 'syncing') { cls = 'busy'; txt = '🔄 同步緊'; }
+  else if (!navigator.onLine || s.state === 'offline') { cls = 'off'; txt = '📴 離線' + (s.pending ? ' · ' + s.pending + ' 待同步' : ''); }
+  else if (s.state === 'error') { cls = 'bad'; txt = '⚠️ 同步出錯'; }
+  else if (s.pending) { cls = 'pend'; txt = '⏳ ' + s.pending + ' 待同步'; }
+  else { cls = 'ok'; txt = '✓ 已同步'; }
+  p.className = 'syncpill ' + cls; p.innerHTML = txt + t;
+  p.title = s.lastError || '';
+}
+$('syncPill').onclick = () => {
+  const s = ENG.status();
+  if (!s.configured) return openConn();
+  if (s.failed) return openFailed();
+  bgSync('manual');
+};
+$('gearBtn').onclick = () => openSettings();
+
+/** Runs a sync; the toast comes from syncToast, which hears EVERY finished sync (also automatic retries). */
+async function bgSync(trigger) {
+  if (!ENG) return;
+  const r = await ENG.syncAll({ trigger: trigger, manual: trigger === 'manual' });
+  if (r && r.skipped === 'nocfg' && trigger === 'manual') openConn();
+  return r;
+}
+/** In-app toast when a sync finishes with something to say (quiet for background no-op pulls). */
+function syncToast(r) {
+  if (!r || r.skipped) return;
+  const loud = r.trigger === 'manual' || r.trigger === 'write';
+  if (r.failed && r.failed.length) toast('⚠️ ' + r.failed.length + ' 項同步失敗，撳右上角睇', 3500);
+  else if (r.error) {
+    if (r.auth) toast('🔑 Token 唔啱，撳 ⚙︎ › 連線設定 檢查', 4000);
+    else if (r.network) { if (loud) toast('📴 連唔到伺服器，改動已安全存喺部機，遲啲自動再試', 3500); }
+    else if (r.busy) { if (r.trigger === 'manual') toast('⏳ 日曆忙緊（Google 同步中），遲啲自動再試', 3000); }
+    else toast('⚠️ 同步出錯：' + r.error, 4000);
+  }
+  else if (r.ok) toast('已同步 ' + r.ok + ' 項 ✓');
+  else if (r.first && r.pulled) toast('已載入日曆 ✓');
+  else if (r.changed && r.trigger !== 'write') toast('已更新 ✓（有新改動）');
+  else if (r.trigger === 'manual') toast('已經係最新 ✓');
+}
+
+/* ----- Settings › Sync card (same fields / buttons as Vault V3) ----- */
+let persisted = null;
+function openSettings() {
+  const s = ENG.status();
+  $('pop').style.borderTopColor = 'var(--primary)';
+  $('pop').innerHTML = '<h3>設定 Settings</h3>' +
+    '<div class="card"><div class="ct">同步 Sync（Calendar V3 · 資料存喺呢部機 IndexedDB）</div>' +
+    '<div class="kv"><span>上次同步 Last sync</span><span>' + esc(whenFull(s.lastOkAt)) + '</span></div>' +
+    '<div class="kv"><span>等緊同步 Pending</span><span>' + s.pending + ' 項</span></div>' +
+    '<div class="kv"><span>自動同步 Auto</span><span>開 App 時、有網時、返到 App 時、每 10 分鐘</span></div>' +
+    '<div class="kv"><span>Google ⇄ Sheet</span><span>伺服器每 5 分鐘自動同步</span></div>' +
+    (s.lastError ? '<div class="kv"><span>上次問題</span><span>' + esc(s.lastError) + '</span></div>' : '') +
+    (s.failed ? '<div class="kv"><span>同步失敗 Failed</span><span>' + s.failed + ' 項</span></div>' : '') +
+    '<div class="kv"><span>永久儲存 Persistent</span><span>' + (persisted ? '✓ 開咗' : '未有（瀏覽器決定）') + '</span></div>' +
+    '<div class="stack"><button type="button" id="st_conn">🔗 連線設定 Server URL / token</button>' +
+    '<button type="button" class="primary" id="st_sync">🔄 而家同步 Sync now</button>' +
+    '<button type="button" id="st_google">🗓 即刻同 Google 日曆同步 Pull Google now</button>' +
+    (s.failed ? '<button type="button" id="st_failed">⚠️ 睇同步失敗 Failed</button>' : '') + '</div></div>' +
+    '<div class="row"><button type="button" id="st_close">Close</button></div>';
+  $('st_conn').onclick = openConn;
+  $('st_sync').onclick = () => { hidePop(); bgSync('manual'); };
+  $('st_google').onclick = () => {
+    if (!ENG.cfg.url) return openConn();
+    hidePop(); toast('🔄 同 Google 日曆同步緊…', 4000);
+    ENG.syncGoogle().then(r => toast(r && r.error ? '⚠️ ' + r.error : 'Google 日曆已同步 ✓'), e => toast('⚠️ ' + e.message, 4000));
+  };
+  if ($('st_failed')) $('st_failed').onclick = openFailed;
+  $('st_close').onclick = hidePop;
+  $('popBack').classList.remove('hide');
+}
+
+/* ----- Connection sheet: Apps Script URL + the calendar's OWN token, stored only on this phone ----- */
+function openConn() {
+  const c = ENG.cfg;
+  $('pop').style.borderTopColor = 'var(--primary)';
+  $('pop').innerHTML = '<h3>連線設定 Connection</h3>' +
+    '<label class="fld" for="cn_url">Apps Script 網頁應用程式網址（/exec 結尾）</label>' +
+    '<input id="cn_url" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off" spellcheck="false" value="' + esc(c.url || '') + '">' +
+    '<label class="fld" for="cn_tok">Token（日曆專用）</label>' +
+    '<input id="cn_tok" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" value="' + esc(c.token || '') + '">' +
+    '<div class="hint">只會存喺呢部機。網址同 token 唔好放上公開 GitHub。</div>' +
+    '<div class="row"><button type="button" id="cn_cancel">Cancel</button><button type="button" class="primary" id="cn_save">Save</button></div>';
+  $('cn_cancel').onclick = hidePop;
+  $('cn_save').onclick = async () => {
+    const url = $('cn_url').value.trim(), tok = $('cn_tok').value.trim();
+    if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { toast('網址要係 https://script.google.com/…/exec', 3000); return; }
+    if (tok.length < 20) { toast('請貼上日曆嘅 token', 3000); return; }
+    await ENG.setCfg(url, tok);
+    hidePop(); toast('已儲存，背景連線緊…'); renderPill();
+    try { await ENG.call('ping', [], 30000); toast('連線成功 ✓'); bgSync('manual'); }
+    catch (e) { toast(e.auth ? '🔑 Token 唔啱' : '⚠️ ' + e.message, 4000); }
+  };
+  $('popBack').classList.remove('hide');
+}
+
+/* ----- changes the server refused ----- */
+function openFailed() {
+  const rows = ENG.failed.map(f => {
+    const o = f.op, what = o.kind === 'delete' ? 'Delete: ' + (o.ref.title || '') : (o.kind === 'add' ? 'Add: ' : 'Edit: ') + (o.form.title || '');
+    return '<div class="failrow"><b>' + esc(what) + '</b>' + esc(f.error || '') + '</div>';
+  }).join('');
+  $('pop').style.borderTopColor = 'var(--danger)';
+  $('pop').innerHTML = '<h3>同步失敗 Failed</h3><div class="hint">呢啲改動伺服器做唔到（例如嗰個活動喺 Sheet 度改咗／刪咗）。請喺 App 再做一次。</div>' +
+    (rows || '<div class="hint">冇</div>') +
+    '<div class="row"><button type="button" id="fl_clear" class="danger">清除 Clear</button><button type="button" id="fl_close">Close</button></div>';
+  $('fl_clear').onclick = () => ENG.clearFailed().then(() => { hidePop(); renderPill(); });
+  $('fl_close').onclick = hidePop;
+  $('popBack').classList.remove('hide');
+}
+
+/* ----- boot: open IndexedDB → show the phone's copy at once → sync in the background ----- */
+async function boot() {
+  try {
+    const db = await CalIDB.open();
+    ENG = CalSync.create({ db: db });
+    let raf = 0;
+    ENG.onResult(syncToast);
+    ENG.onChange(() => { renderPill(); if (ENG.ver !== shownVer && !raf) raf = requestAnimationFrame(() => { raf = 0; if (ENG.ver !== shownVer) refresh(); }); });
+    await ENG.init();
+    refresh(); renderPill(); started = true;
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(p => p || navigator.storage.persist()).then(p => { persisted = p; }).catch(() => {});
+    ENG.startAuto({ intervalMs: 600000 });   // every 10 min while open
+    if (!ENG.cfg.url) openConn(); else bgSync('open');
+  } catch (e) { $('status').textContent = 'Error: ' + e.message; }
+}
+window.addEventListener('online', () => { renderPill(); bgSync('online'); });
+window.addEventListener('offline', () => renderPill());
+document.addEventListener('visibilitychange', () => { if (!document.hidden && started) { if (META.today !== CalSync.localToday()) refresh(); bgSync('visible'); } });
+
+/* Service worker: app shell cache-first (opens instantly, also offline); a new version asks before reloading. */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('sw.js');
+      const prompt = w => {
+        $('updbar').innerHTML = '<div class="netbar"><span>🆕 有新版本 New version</span><button type="button" id="swUpd">更新 Update</button></div>';
+        $('swUpd').onclick = () => w.postMessage({ type: 'SKIP_WAITING' });
+      };
+      if (reg.waiting && navigator.serviceWorker.controller) prompt(reg.waiting);
+      reg.addEventListener('updatefound', () => { const w = reg.installing; if (!w) return;
+        w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) prompt(w); }); });
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloaded || !window.__swHadController) return; reloaded = true; location.reload(); });
+      window.__swHadController = !!navigator.serviceWorker.controller;
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    } catch (e) { console.warn('SW register failed', e); }
+  });
+}
+boot();
+</script>
+</body>
+</html>
