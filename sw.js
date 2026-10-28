@@ -6,8 +6,8 @@
  * - Same github.io origin as Vault: this worker's scope is /calendar/ and it only ever deletes 'calendar-' caches.
  * - No Background Sync: iOS has none; the app syncs when opened / back online / returning / every 10 min.
  */
-const CACHE = 'calendar-v3-shell-r1';
-const SHELL = ['./', './index.html', './idb.js', './sync.js', './manifest.json',
+const CACHE = 'calendar-v3-shell-r2';
+const SHELL = ['./', './index.html', './idb.js', './festivals.js', './sync.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-32.png'];
 
 self.addEventListener('install', event => {

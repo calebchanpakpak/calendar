@@ -1,4 +1,4 @@
-# Calendar (V3)
+# Calendar (V3.1)
 
 Caleb's calendar as an installable web app (PWA) – opens instantly and works offline.
 
@@ -9,5 +9,7 @@ Caleb's calendar as an installable web app (PWA) – opens instantly and works o
 - The server address and the calendar's own token are typed in once (⚙︎ › Connection) and stay on the phone.
   **Neither is in this repository.**
 
-Files: `index.html` (app), `sync.js` (sync engine), `idb.js` (IndexedDB), `sw.js` (offline cache),
-`manifest.json`, `icons/`.
+**V3.1:** Add defaults end = start + 1 hour (until you edit end); stable title autocomplete from local events;
+Month festival wallpaper (10 computed festivals – never events); fixed equal Month cells that fit one iPhone screen.
+
+Files: `index.html`, `sync.js`, `idb.js`, `festivals.js`, `sw.js`, `manifest.json`, `icons/`.
