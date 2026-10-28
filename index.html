@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Calendar</title>
-<!-- Calendar V3 (local-first PWA, GitHub Pages): static files + IndexedDB on the phone + background sync to the
+<!-- Calendar V3.2 (local-first PWA, GitHub Pages): static files + IndexedDB on the phone + background sync to the
      Apps Script JSON API (Api.gs doPost). The UI is the V2.4 page. No server URL or token in this file:
      both are typed once in the Connection sheet and stay on the phone. -->
 <link rel="manifest" href="manifest.json">
@@ -85,8 +85,17 @@
   .mo .cell.today .num { background:var(--primary); color:#fff; border-radius:10px; padding:0 6px; }
   .mo .num { font-size:12px; display:inline-block; line-height:14px; flex:none; }
   .mo .fest { font-size:9px; line-height:1.1; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1; opacity:.9; }
-  .mo .cell.festive { /* bg set inline from CalFestivals */ }
-  .mo .cell.festive::before { content:attr(data-emoji); position:absolute; right:2px; bottom:2px; font-size:22px; line-height:1; opacity:.22; pointer-events:none; z-index:0; }
+  .mo .cell.festive { /* bg set inline from CalFestivals (may be diagonal gradient) */ }
+  .mo .cell .fest-stack { display:flex; flex-direction:column; align-items:flex-end; gap:0; max-width:72%; line-height:1.05; }
+  .mo .cell .fest { font-size:8px; font-weight:600; opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .mo .cell.festive::before, .mo .cell.festive::after { pointer-events:none; }
+  .mo .cell.festive[data-emoji]::before {
+    content: attr(data-emoji); position:absolute; top:2px; left:2px; font-size:18px; opacity:.18; line-height:1; z-index:0;
+  }
+  .mo .cell.festive[data-emoji2]::after {
+    content: attr(data-emoji2); position:absolute; bottom:2px; right:2px; font-size:16px; opacity:.18; line-height:1; z-index:0;
+  }
+  .mo .cell .numline, .mo .cell .slot, .mo .cell .more, .mo .cell .chip { position:relative; z-index:1; }
   .mo .cell.festive > * { position:relative; z-index:1; }
   /* fixed slot rows so spanning bars line up; empty slots keep height so rows don't shrink */
   .mo .numline { height:var(--mo-top, 18px); margin-bottom:0; display:flex; align-items:center; gap:2px; overflow:hidden; }
@@ -238,6 +247,7 @@
   <div id="popBack" class="hide"><div id="pop"></div></div>
 </main>
 <script src="idb.js"></script>
+<script src="tz.js"></script>
 <script src="festivals.js"></script>
 <script src="sync.js"></script>
 <script>
@@ -337,19 +347,46 @@ function occurrenceDates(e, from, to) {
   return out;
 }
 
-/** Occurrences of all events overlapping [from, to]: {e, date, endDate, s (minutes), en (minutes)} */
+/** Occurrences overlapping [from, to] in the DEVICE zone.
+ *  Sheet times are Helsinki wall-clock; timed events are converted per occurrence (DST-safe).
+ *  All-day events stay date-only (never shift). helDate = Helsinki occurrence date (for EXDATE / scope).
+ *  When device zone === Europe/Helsinki the result matches the previous V3.1 expand byte-for-byte on fields used for layout. */
 function expand(events, from, to) {
+  const tz = (typeof CalTz !== 'undefined') ? CalTz.deviceTZ() : 'Europe/Helsinki';
+  const same = !CalTz || tz === CalTz.STORAGE_TZ;
+  // Pad Helsinki search so near-midnight shifts still land inside the device window.
+  const helFrom = same ? from : addDays(from, -1);
+  const helTo = same ? to : addDays(to, 1);
   const out = [];
   events.forEach(e => {
     const span = e.endDate && e.endDate > e.date ? (ymd(e.endDate) - ymd(e.date)) / DAY : 0;
-    occurrenceDates(e, from, to).forEach(d => {
-      const end = addDays(d, span);
-      if (end < from) return;
-      out.push({ e, date: d, endDate: end, s: mins(e.time), en: e.endTime ? mins(e.endTime) : mins(e.time) + 60 });
+    occurrenceDates(e, helFrom, helTo).forEach(d => {
+      const endHel = addDays(d, span);
+      if (e.allDay || !e.time) {
+        if (endHel < from || d > to) return;
+        out.push({ e, date: d, endDate: endHel, s: 0, en: 1440, time: '', endTime: '', helDate: d });
+        return;
+      }
+      const startL = same ? { date: d, time: e.time } : CalTz.helToDevice(d, e.time, tz);
+      const endHm = e.endTime || (function () {
+        const m = mins(e.time) + 60; return String(Math.floor((m % 1440) / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+      })();
+      const endHelDate = e.endTime ? endHel : (mins(e.time) + 60 >= 1440 ? addDays(d, 1) : d);
+      const endL = same ? { date: endHelDate, time: endHm } : CalTz.helToDevice(endHelDate, endHm, tz);
+      if (endL.date < from || startL.date > to) return;
+      const s = mins(startL.time);
+      let en = mins(endL.time);
+      // Overnight in device zone but same local calendar day encoding: keep en > s for layout; multi-day uses endDate.
+      if (endL.date === startL.date && en <= s) en = s + 20;
+      out.push({ e, date: startL.date, endDate: endL.date, s: s, en: en, time: startL.time, endTime: endL.time, helDate: d });
     });
   });
-  return out.sort((a, b) => (a.date + (a.e.allDay ? '' : a.e.time)) < (b.date + (b.e.allDay ? '' : b.e.time)) ? -1 : 1);
+  return out.sort((a, b) => (a.date + (a.e.allDay ? '' : (a.time || a.e.time))) < (b.date + (b.e.allDay ? '' : (b.time || b.e.time))) ? -1 : 1);
 }
+
+/** Display HH:mm for an expanded occurrence (device-local for timed). */
+const occTime = o => o.e.allDay ? '' : (o.time || o.e.time || '');
+const occEndTime = o => o.e.allDay ? '' : (o.endTime || o.e.endTime || '');
 /* ===== end recurrence engine ===== */
 
 let META = { colors: {}, presets: {}, suggestions: [], guests: [], today: '' }, EVENTS = [];
@@ -390,8 +427,8 @@ function renderList() {
   $('list').innerHTML = days.length ? days.map(d =>
     '<section class="day' + (d === today ? ' today' : '') + '"><h2>' + esc(fmtDay(d, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })) + (d === today ? ' · Today' : '') + '</h2>' +
     groups[d].map(o => { const e = o.e, h = hex(e.color);
-      return '<div class="ev" data-id="' + esc(e.id) + '" data-date="' + esc(o.date) + '" style="border-color:' + h + ';background:' + soft(h) + '"><div class="time">' +
-        (e.allDay ? 'All day' : esc(e.time) + (e.endTime ? '–' + esc(e.endTime) : '')) + (o.endDate > o.date ? '<br><span class="muted">to ' + esc(fmtDay(o.endDate, { month: 'short', day: 'numeric' })) + '</span>' : '') + '</div><div class="body">' +
+      return '<div class="ev" data-id="' + esc(e.id) + '" data-date="' + esc(o.helDate || o.date) + '" style="border-color:' + h + ';background:' + soft(h) + '"><div class="time">' +
+        (e.allDay ? 'All day' : esc(occTime(o)) + (occEndTime(o) ? '–' + esc(occEndTime(o)) : '')) + (o.endDate > o.date ? '<br><span class="muted">to ' + esc(fmtDay(o.endDate, { month: 'short', day: 'numeric' })) + '</span>' : '') + '</div><div class="body">' +
         '<div class="title">' + esc(e.title) + '<span class="badge">' + esc(e.category) + '</span>' + (e.recurrence ? '<span class="badge">repeats</span>' : '') + (e._pending ? '<span class="badge pend">⏳ syncing</span>' : '') + '</div>' +
         (e.description ? '<div class="meta">' + esc(e.description) + '</div>' : '') + '</div></div>'; }).join('') +
     '</section>').join('') : '<p>No events to show.</p>';
@@ -416,7 +453,7 @@ function renderWeek() {
       timed[d].push({ o, s, en: Math.min(en, 1440) });
     });
   });
-  const chip = o => { const h = hex(o.e.color); return '<div class="chip" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.date) + '" style="' + softStyle(h) + '" title="' + esc(o.e.title) + '">' + esc(o.e.title) + '</div>'; };
+  const chip = o => { const h = hex(o.e.color); return '<div class="chip" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.helDate || o.date) + '" style="' + softStyle(h) + '" title="' + esc(o.e.title) + '">' + esc(o.e.title) + '</div>'; };
   const used = [[], [], [], [], [], [], []], bars = [];
   spans.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.endDate > b.endDate ? -1 : a.endDate < b.endDate ? 1 : 0)).forEach(o => {
     const c0 = Math.max(0, Math.round((ymd(o.date) - ymd(ws)) / DAY)), c1 = Math.min(6, Math.round((ymd(o.endDate) - ymd(ws)) / DAY));
@@ -427,8 +464,8 @@ function renderWeek() {
   });
   const lanes = bars.reduce((m, b) => Math.max(m, b.lane + 1), 0);
   const barHtml = b => { const e = b.o.e, h = hex(e.color);
-    return '<div class="wk-bar' + (b.o.date < ws ? ' cl' : '') + (b.o.endDate > we ? ' cr' : '') + '" data-id="' + esc(e.id) + '" data-date="' + esc(b.o.date) + '" style="grid-column:' + (b.c0 + 2) + ' / ' + (b.c1 + 3) + ';grid-row:' + (b.lane + 1) + ';' + softStyle(h) + '" title="' + esc(e.title) + '">' +
-      (e.allDay || b.o.date < ws ? '' : '<b>' + esc(e.time) + '</b> ') + esc(e.title) + '</div>'; };
+    return '<div class="wk-bar' + (b.o.date < ws ? ' cl' : '') + (b.o.endDate > we ? ' cr' : '') + '" data-id="' + esc(e.id) + '" data-date="' + esc(b.o.helDate || b.o.date) + '" style="grid-column:' + (b.c0 + 2) + ' / ' + (b.c1 + 3) + ';grid-row:' + (b.lane + 1) + ';' + softStyle(h) + '" title="' + esc(e.title) + '">' +
+      (e.allDay || b.o.date < ws ? '' : '<b>' + esc(occTime(b.o)) + '</b> ') + esc(e.title) + '</div>'; };
   let html = '<div class="wk"><div class="wk-inner"><div class="wk-head"><div></div>' +
     days.map(d => '<div class="' + (d === META.today ? 'today' : '') + '">' + esc(fmtDay(d, { weekday: 'short', day: 'numeric' })) + '</div>').join('') + '</div>' +
     '<div class="wk-allday"><div class="muted" style="font-size:10px;grid-column:1;grid-row:1 / ' + (lanes + 2) + '">all day</div>' +
@@ -452,8 +489,8 @@ function renderWeek() {
     html += '<div class="wk-col' + (d === META.today ? ' today' : '') + '">' +
       Array.from({ length: 24 }, (_, h) => '<div class="hr" style="top:' + h * 40 + 'px"></div>').join('') +
       segs.map(x => { const e = x.o.e, h = hex(e.color), w = 100 / x.lanes;
-        return '<div class="blk" data-id="' + esc(e.id) + '" data-date="' + esc(x.o.date) + '" style="top:' + x.s * PX + 'px;height:' + Math.max(14, (x.en - x.s) * PX) + 'px;left:' + x.lane * w + '%;width:' + w + '%;' + softStyle(h) + '" title="' + esc(e.title + ' ' + e.time + (e.endTime ? '–' + e.endTime : '')) + '">' +
-          '<b>' + esc(e.time) + '</b> ' + esc(e.title) + '</div>'; }).join('') +
+        return '<div class="blk" data-id="' + esc(e.id) + '" data-date="' + esc(x.o.helDate || x.o.date) + '" style="top:' + x.s * PX + 'px;height:' + Math.max(14, (x.en - x.s) * PX) + 'px;left:' + x.lane * w + '%;width:' + w + '%;' + softStyle(h) + '" title="' + esc(e.title + ' ' + occTime(x.o) + (occEndTime(x.o) ? '–' + occEndTime(x.o) : '')) + '">' +
+          '<b>' + esc(occTime(x.o)) + '</b> ' + esc(e.title) + '</div>'; }).join('') +
       (d === META.today ? '<div class="now" style="top:' + nowMinutes() * PX + 'px"></div>' : '') + '</div>';
   });
   $('week').innerHTML = html + '</div></div></div>';
@@ -463,7 +500,7 @@ function renderWeek() {
   $('wkBody').scrollTop = 7 * 40;                   // start the view at 07:00
   $('status').textContent = occ.length + ' this week';
 }
-function nowMinutes() { const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Helsinki', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()); return mins(p); }
+function nowMinutes() { return (typeof CalTz !== 'undefined' ? CalTz.nowMinutes() : mins(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()))); }
 
 /* ----- Month: 6 equal-height week rows, fills the phone screen; festival wallpaper (not events) ----- */
 function sizeMonthPane() {
@@ -522,21 +559,21 @@ function renderMonth() {
         const o = items[k++];
         if (!o) { slots += '<div class="slot"></div>'; continue; }
         const h = hex(o.e.color);
-        slots += '<div class="chip slot" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.date) + '" style="' + softStyle(h) + '" title="' + esc((o.e.allDay ? '' : o.e.time + ' ') + o.e.title) + '">' + esc(o.e.title) + '</div>';
+        slots += '<div class="chip slot" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.helDate || o.date) + '" style="' + softStyle(h) + '" title="' + esc((o.e.allDay ? '' : occTime(o) + ' ') + o.e.title) + '">' + esc(o.e.title) + '</div>';
       }
       hidden += Math.max(0, items.length - k);
-      const fest = (typeof CalFestivals !== 'undefined' && CalFestivals.festivalOn) ? CalFestivals.festivalOn(d) : null;
-      const festCls = fest ? ' festive' : '';
-      const festStyle = fest ? 'background:' + fest.bg + ';' : '';
-      const festAttr = fest ? ' data-emoji="' + fest.emoji + '"' : '';
-      const festLabel = fest ? '<span class="fest" style="color:' + (fest.ink || '#5a6dbe') + '">' + esc(fest.name) + '</span>' : '';
+      const marksWp = (typeof CalFestivals !== 'undefined' && CalFestivals.markersOn) ? CalFestivals.markersOn(d) : [];
+      const festCls = marksWp.length ? ' festive' : '';
+      const festStyle = marksWp.length ? CalFestivals.wallpaperBackground(marksWp) : '';
+      const festAttr = (marksWp[0] ? ' data-emoji="' + marksWp[0].emoji + '"' : '') + (marksWp[1] ? ' data-emoji2="' + marksWp[1].emoji + '"' : '');
+      const festLabel = marksWp.length ? '<span class="fest-stack">' + marksWp.map(x => '<span class="fest" style="color:' + (x.ink || '#5a6dbe') + '">' + esc(x.name) + '</span>').join('') + '</span>' : '';
       html += '<div class="cell' + (d.slice(0, 7) !== m ? ' other' : '') + (d === META.today ? ' today' : '') + festCls + '" data-day="' + d + '"' + festAttr + ' style="' + festStyle + '"><div class="numline"><span class="num">' + (+d.slice(8)) + '</span>' +
         festLabel +
         (mk.length ? '<span class="marks">' + mk.map(o => '<i class="mk" style="background:' + hex(o.e.color) + '" title="' + esc(o.e.title) + '"></i>').join('') + '</span>' : '') + '</div>' +
         slots + (hidden ? '<div class="more">+' + hidden + '</div>' : '') + '</div>';
     }
     html += segs.filter(x => x.row < ROWS).map(x => { const h = hex(x.o.e.color);
-      return '<div class="bar' + (x.o.date < ws ? ' cl' : '') + (x.o.endDate > we ? ' cr' : '') + '" data-id="' + esc(x.o.e.id) + '" data-date="' + esc(x.o.date) + '" data-row="' + x.row + '" data-ws="' + ws + '" data-c0="' + x.c0 + '" data-c1="' + x.c1 + '" style="left:calc(' + x.c0 + ' * 100% / 7 + 2px);width:calc(' + (x.c1 - x.c0 + 1) + ' * 100% / 7 - 4px);top:' + (TOP + x.row * ROW) + 'px;' + softStyle(h) + '" title="' + esc(x.o.e.title) + '">' + esc(x.o.e.title) + '</div>'; }).join('') + '</div>';
+      return '<div class="bar' + (x.o.date < ws ? ' cl' : '') + (x.o.endDate > we ? ' cr' : '') + '" data-id="' + esc(x.o.e.id) + '" data-date="' + esc(x.o.helDate || x.o.date) + '" data-row="' + x.row + '" data-ws="' + ws + '" data-c0="' + x.c0 + '" data-c1="' + x.c1 + '" style="left:calc(' + x.c0 + ' * 100% / 7 + 2px);width:calc(' + (x.c1 - x.c0 + 1) + ' * 100% / 7 - 4px);top:' + (TOP + x.row * ROW) + 'px;' + softStyle(h) + '" title="' + esc(x.o.e.title) + '">' + esc(x.o.e.title) + '</div>'; }).join('') + '</div>';
   }
   $('month').innerHTML = html + '</div>';
   $('month').querySelectorAll('.cell').forEach(c => c.onclick = () => { if (!justSwiped()) openDay(c.dataset.day); });
@@ -718,7 +755,13 @@ $('addBtn').onclick = () => {
   if (state.edit) { openAdd(state.view === 'list' ? META.today : state.cursor); return; }
   const opening = !form.classList.contains('open');
   form.classList.toggle('open'); if (!$('date').value) $('date').value = state.view === 'list' ? META.today : state.cursor; updateRepeat();
-  if (opening) { endTouched = false; prevStart = form.elements.namedItem('startTime').value || ''; }
+  if (opening) {
+    endTouched = false;
+    if (!state.edit && !form.elements.namedItem('startTime').value && !form.elements.namedItem('allDay').checked && typeof CalTz !== 'undefined') {
+      const n = CalTz.nextHourLocal();
+      setVal('startTime', n.time); prevStart = n.time; onStartTimeChange();
+    } else prevStart = form.elements.namedItem('startTime').value || '';
+  }
 };
 $('cancelBtn').onclick = () => { form.classList.remove('open'); if (state.edit) clearForm(); };
 
@@ -777,9 +820,46 @@ function setSaving(on) {
   else if (state.saving) b.textContent = state.saveLabel || 'Save';
   state.saving = on; b.disabled = on;
 }
+
+/** Convert a stored (Helsinki) event into device-local form field values. All-day unchanged. */
+function formFieldsFromStored(e, occurrenceHel) {
+  if (e.allDay || !e.time) {
+    const d = occurrenceHel || e.date;
+    const span = e.endDate && e.endDate > e.date ? Math.round((ymd(e.endDate) - ymd(e.date)) / DAY) : 0;
+    return { date: d, startTime: '', endTime: '', endDate: span ? addDays(d, span) : (e.endDate && e.endDate > e.date ? e.endDate : '') };
+  }
+  const d = occurrenceHel || e.date;
+  const span = e.endDate && e.endDate > e.date ? Math.round((ymd(e.endDate) - ymd(e.date)) / DAY) : 0;
+  const endHel = span ? addDays(d, span) : (e.endDate || d);
+  if (!CalTz || CalTz.deviceTZ() === CalTz.STORAGE_TZ) {
+    return { date: d, startTime: e.time, endTime: e.endTime || '', endDate: endHel > d ? endHel : '' };
+  }
+  const s = CalTz.helToDevice(d, e.time);
+  const en = CalTz.helToDevice(endHel, e.endTime || e.time);
+  return { date: s.date, startTime: s.time, endTime: en.time, endDate: en.date > s.date ? en.date : '' };
+}
+/** Device-local form → Helsinki wall-clock fields for enqueue / validate. All-day unchanged. */
+function formToStored(data) {
+  if (data.allDay || !data.startTime) return data;
+  if (!CalTz || CalTz.deviceTZ() === CalTz.STORAGE_TZ) return data;
+  const endDate = data.endDate || data.date;
+  const s = CalTz.deviceToHel(data.date, data.startTime);
+  const en = CalTz.deviceToHel(endDate, data.endTime || data.startTime);
+  const out = Object.assign({}, data, { date: s.date, startTime: s.time, endTime: en.time, endDate: en.date > s.date ? en.date : '' });
+  return out;
+}
 /** Add form with a date filled in (Month day preview "+ Add"). */
 function openAdd(date) {
   hidePop(); clearForm(); setVal('date', date); updateRepeat();
+  // V3.2: default start/end in device local time; V3.1 end=start+1h until touched still applies
+  if (!form.elements.namedItem('allDay').checked) {
+    const n = (typeof CalTz !== 'undefined') ? CalTz.nextHourLocal() : null;
+    if (n) {
+      setVal('date', date || n.date);
+      setVal('startTime', n.time); prevStart = n.time; endTouched = false;
+      onStartTimeChange();
+    }
+  }
   form.classList.add('open'); showForm(false);   // v2.4 update: Add no longer focuses the title either
 }
 /** Brings the form into view. v2.4: neither Edit nor Add (any entry point) focuses or selects a field,
@@ -809,7 +889,12 @@ function tapEvent(id, date) {
   if (isAppSeries(e) && date) return openScope(e, date);
   openEdit(id);
 }
-const whenText = e => e.allDay ? 'all day' : e.time + (e.endTime ? '–' + e.endTime : '');
+const whenText = e => {
+  if (e.allDay) return 'all day';
+  if (!CalTz || CalTz.deviceTZ() === CalTz.STORAGE_TZ) return e.time + (e.endTime ? '–' + e.endTime : '');
+  const s = CalTz.helToDevice(e.date, e.time), en = CalTz.helToDevice(e.endDate || e.date, e.endTime || e.time);
+  return s.time + (e.endTime || en.time ? '–' + en.time : '');
+};
 /** v2.3 chooser popup: two big buttons (thumb-sized on a phone) + Cancel. */
 function openScope(e, date) {
   const long = d => fmtDay(d, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
@@ -834,16 +919,14 @@ function openEdit(id, opt) {
   $('category').value = e.category;
   if (e.category !== 'family') state.color = META.colors[e.color] ? e.color : META.defaultColor;
   buildSwatches(); onCategory();
-  setVal('title', e.title); setVal('date', e.date); setVal('description', e.description || '');
+  setVal('title', e.title); setVal('description', e.description || '');
   form.elements.namedItem('allDay').checked = !!e.allDay;
-  setVal('startTime', e.allDay ? '' : e.time); setVal('endTime', e.allDay ? '' : (e.endTime || ''));
-  setVal('endDate', e.endDate && e.endDate > e.date ? e.endDate : '');
-  prevStart = e.allDay ? '' : (e.time || '');   // v2.3: base for moving the end time with the start time
+  const ff0 = formFieldsFromStored(e, scope === 'this' ? state.edit.occurrence : null);
+  setVal('date', ff0.date); setVal('startTime', ff0.startTime); setVal('endTime', ff0.endTime); setVal('endDate', ff0.endDate);
+  prevStart = ff0.startTime || '';   // v2.3: base for moving the end time with the start time
   setKeepOption(e); $('freq').value = e.recurrence ? 'keep' : 'none';
   $('freq').disabled = !!e.gcalOccurrence;
-  if (scope === 'this') {   // only this date: that date (multi-day keeps its length), no repeat
-    const d = state.edit.occurrence, span = e.endDate && e.endDate > e.date ? (ymd(e.endDate) - ymd(e.date)) / DAY : 0;
-    setVal('date', d); setVal('endDate', span ? addDays(d, span) : '');
+  if (scope === 'this') {   // only this date: device-local fields already from occurrence; no repeat
     setKeepOption(null); $('freq').value = 'none'; $('freq').disabled = true;
   }
   updateRepeat();
@@ -878,7 +961,7 @@ form.onsubmit = ev => {
   if (state.saving) return;   // v2.4: a second tap while saving is ignored
   if (!state.submitId) state.submitId = newSubmitId();
   const f = form, v = n => f.elements.namedItem(n).value;   // elements by name (avoids clashes like form.title)
-  const data = {
+  let data = {
     title: v('title'), date: v('date'), startTime: v('startTime'), endTime: v('endTime'),
     endDate: v('endDate'), allDay: f.elements.namedItem('allDay').checked, category: v('category'), color: currentColor(),
     description: v('description'), familyTitle: dupFamilyTitle(v('familyTitle')),
@@ -890,6 +973,8 @@ form.onsubmit = ev => {
     if (!data.familyTitle) { $('status').textContent = 'Type a family title for the family copy (e.g. C: mom).'; $('familyTitle').focus(); return; }
     $('familyTitle').value = data.familyTitle;
   } else delete data.familyTitle;
+  // V3.2: form shows device-local times; convert back to Helsinki wall-clock before queue/validate
+  data = formToStored(data);
   if (state.edit) return saveEdit(data);
   if (data.category !== 'personal' && !data.guests.length && !confirm('No family member is ticked, so nobody gets an invite. Save anyway?')) return;
   const bad = CalSync.validate(data);
@@ -962,13 +1047,13 @@ function openDay(d) {
   occ.sort((a, b) => (a.e.allDay === b.e.allDay ? 0 : a.e.allDay ? -1 : 1) || startMin(a) - startMin(b) || (a.e.title < b.e.title ? -1 : 1));
   const when = o => {
     if (o.e.allDay) return 'All day';
-    const s = o.date < d ? '' : o.e.time, en = o.endDate > d ? '' : (o.e.endTime || '');
+    const s = o.date < d ? '' : occTime(o), en = o.endDate > d ? '' : occEndTime(o);
     return s && en ? s + '–' + en : s ? s + ' →' : en ? '→ ' + en : 'All day (continues)';
   };
   $('pop').style.borderTopColor = 'var(--accent)';
   $('pop').innerHTML = '<h3>' + esc(fmtDay(d, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })) + (d === META.today ? ' · Today' : '') + '</h3>' +
     (occ.length ? '<div class="dp-list">' + occ.map(o => { const h = hex(o.e.color);
-        return '<div class="dp-ev" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.date) + '" style="border-color:' + h + ';background:' + soft(h) + '"><span class="dp-time">' + esc(when(o)) + '</span><span><b>' + esc(o.e.title) + '</b>' +
+        return '<div class="dp-ev" data-id="' + esc(o.e.id) + '" data-date="' + esc(o.helDate || o.date) + '" style="border-color:' + h + ';background:' + soft(h) + '"><span class="dp-time">' + esc(when(o)) + '</span><span><b>' + esc(o.e.title) + '</b>' +
           (o.e.recurrence ? '<span class="badge">repeats</span>' : '') + '</span></div>'; }).join('') + '</div>'
       : '<div class="dp-empty">No plans</div>') +
     '<div class="row' + (occ.length ? '' : ' center') + '"><button type="button" id="popWeek">Open week</button>' +
@@ -1095,7 +1180,7 @@ function openSettings() {
   const s = ENG.status();
   $('pop').style.borderTopColor = 'var(--primary)';
   $('pop').innerHTML = '<h3>設定 Settings</h3>' +
-    '<div class="card"><div class="ct">同步 Sync（Calendar V3.1 · 資料存喺呢部機 IndexedDB）</div>' +
+    '<div class="card"><div class="ct">同步 Sync（Calendar V3.2 · 資料存喺呢部機 IndexedDB）</div>' +
     '<div class="kv"><span>上次同步 Last sync</span><span>' + esc(whenFull(s.lastOkAt)) + '</span></div>' +
     '<div class="kv"><span>等緊同步 Pending</span><span>' + s.pending + ' 項</span></div>' +
     '<div class="kv"><span>自動同步 Auto</span><span>開 App 時、有網時、返到 App 時、每 10 分鐘</span></div>' +
@@ -1176,7 +1261,17 @@ async function boot() {
 }
 window.addEventListener('online', () => { renderPill(); bgSync('online'); });
 window.addEventListener('offline', () => renderPill());
-document.addEventListener('visibilitychange', () => { if (!document.hidden && started) { if (META.today !== CalSync.localToday()) refresh(); bgSync('visible'); } });
+let _lastTZ = (typeof CalTz !== 'undefined' ? CalTz.deviceTZ() : '');
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && started) {
+    const tz = typeof CalTz !== 'undefined' ? CalTz.deviceTZ() : _lastTZ;
+    const dayChanged = META.today !== CalSync.localToday();
+    const tzChanged = tz !== _lastTZ;
+    _lastTZ = tz;
+    if (dayChanged || tzChanged) refresh();
+    bgSync('visible');
+  }
+});
 window.addEventListener('resize', () => { if (state.view === 'month') renderMonth(); });
 if (window.visualViewport) visualViewport.addEventListener('resize', () => { if (state.view === 'month') renderMonth(); });
 

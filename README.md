@@ -1,4 +1,4 @@
-# Calendar (V3.1)
+# Calendar (V3.2)
 
 Caleb's calendar as an installable web app (PWA) – opens instantly and works offline.
 
@@ -8,8 +8,8 @@ Caleb's calendar as an installable web app (PWA) – opens instantly and works o
 - The server (Apps Script, not in this repo) writes the Google Sheet and Google Calendar and syncs them every 5 minutes.
 - The server address and the calendar's own token are typed in once (⚙︎ › Connection) and stay on the phone.
   **Neither is in this repository.**
+- Sheet times stay Europe/Helsinki wall-clock; the phone shows them in the device's current timezone and converts back on save.
 
-**V3.1:** Add defaults end = start + 1 hour (until you edit end); stable title autocomplete from local events;
-Month festival wallpaper (10 computed festivals – never events); fixed equal Month cells that fit one iPhone screen.
+**V3.2:** Device-timezone display (auto on travel); Month dating-anniversary wallpaper (💛 pink, monthly/yearly + unbounded 100-day marks, diagonal split when overlapping festivals); plus V3.1 end+1h / title suggest / 10 festivals.
 
-Files: `index.html`, `sync.js`, `idb.js`, `festivals.js`, `sw.js`, `manifest.json`, `icons/`.
+Files: `index.html`, `sync.js`, `idb.js`, `tz.js`, `festivals.js`, `sw.js`, `manifest.json`, `icons/`.

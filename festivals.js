@@ -101,7 +101,68 @@
     return cache[y][date] || null;
   }
 
-  const api = { INCLUDE_DEC31_NYE, lunarToSolar, easterSunday, winterSolstice, festivalsForYear, festivalOn, STYLES, VERSION: 'V3.1' };
+  /* ===== V3.2 dating anniversary wallpapers (date-only, never events) ===== */
+  /** Start date of the relationship; day 1 = this date. Single config constant. */
+  const ANNIVERSARY_START = '2026-02-17';
+  const ANNIV_STYLE = { kind: 'anniv', emoji: '💛', bg: '#ffe4ef', ink: '#b04070', motif: 'rgba(214,80,130,.16)' };
+  const DAYS_STYLE = { kind: 'days', emoji: '💛', bg: '#fff0f6', ink: '#a03868', motif: 'rgba(214,80,130,.12)' };
+
+  function daysBetween(a, b) {
+    return Math.round((fromYmd(b) - fromYmd(a)) / 864e5);
+  }
+
+  /** Markers for one civil date (device/Helsinki date-only; never shift for TZ). Returns [] or list of {emoji,bg,ink,name,kind}. */
+  function markersOn(date) {
+    if (!date || date.length < 10) return [];
+    const out = [];
+    const fest = festivalOn(date);
+    if (fest) out.push({ kind: 'festival', name: fest.name, emoji: fest.emoji, bg: fest.bg, ink: fest.ink, motif: fest.motif });
+
+    const start = ANNIVERSARY_START;
+    if (date > start) {
+      const dayNum = daysBetween(start, date) + 1; // start = day 1
+      // 100-day marks unbounded: day % 100 === 0
+      if (dayNum > 0 && dayNum % 100 === 0) {
+        out.push(Object.assign({}, DAYS_STYLE, { name: dayNum + ' days' }));
+      }
+      // Monthly/yearly on the 17th after start (not on start itself)
+      if (+date.slice(8, 10) === 17) {
+        const sy = +start.slice(0, 4), sm = +start.slice(5, 7);
+        const y = +date.slice(0, 4), m = +date.slice(5, 7);
+        const months = (y - sy) * 12 + (m - sm);
+        if (months > 0) {
+          let label;
+          if (months % 12 === 0) {
+            const years = months / 12;
+            label = years === 1 ? '1 year' : years + ' years';
+          } else {
+            label = months === 1 ? '1 month' : months + ' months';
+          }
+          out.push(Object.assign({}, ANNIV_STYLE, { name: label }));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Diagonal hard-stop gradient across `colors` (1 → solid; 2 → half/half; 3 → thirds). */
+  function wallpaperBackground(markers) {
+    if (!markers || !markers.length) return '';
+    if (markers.length === 1) return 'background:' + markers[0].bg + ';';
+    const n = markers.length;
+    const stops = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * 100, b = ((i + 1) / n) * 100;
+      stops.push(markers[i].bg + ' ' + a + '%', markers[i].bg + ' ' + b + '%');
+    }
+    return 'background:linear-gradient(135deg, ' + stops.join(', ') + ');';
+  }
+
+  const api = {
+    INCLUDE_DEC31_NYE, lunarToSolar, easterSunday, winterSolstice, festivalsForYear, festivalOn,
+    ANNIVERSARY_START, markersOn, wallpaperBackground, STYLES, ANNIV_STYLE, DAYS_STYLE,
+    VERSION: 'V3.2'
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CalFestivals = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
