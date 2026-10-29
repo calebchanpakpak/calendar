@@ -89,11 +89,15 @@
   .mo .cell .fest-stack { display:flex; flex-direction:column; align-items:flex-end; gap:0; max-width:72%; line-height:1.05; }
   .mo .cell .fest { font-size:8px; font-weight:600; opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   .mo .cell.festive::before, .mo .cell.festive::after { pointer-events:none; }
+  /* V3.2 minor: all marker emojis (festival + anniversary/100-day) sit bottom-right */
   .mo .cell.festive[data-emoji]::before {
-    content: attr(data-emoji); position:absolute; top:2px; left:2px; font-size:18px; opacity:.18; line-height:1; z-index:0;
+    content: attr(data-emoji); position:absolute; bottom:2px; right:2px; font-size:15px; opacity:.22; line-height:1; z-index:0;
+  }
+  .mo .cell.festive[data-emoji][data-emoji2]::before {
+    right:18px; font-size:14px; /* sit beside data-emoji2, not on top of it */
   }
   .mo .cell.festive[data-emoji2]::after {
-    content: attr(data-emoji2); position:absolute; bottom:2px; right:2px; font-size:16px; opacity:.18; line-height:1; z-index:0;
+    content: attr(data-emoji2); position:absolute; bottom:2px; right:2px; font-size:14px; opacity:.22; line-height:1; z-index:0;
   }
   .mo .cell .numline, .mo .cell .slot, .mo .cell .more, .mo .cell .chip { position:relative; z-index:1; }
   .mo .cell.festive > * { position:relative; z-index:1; }
@@ -390,7 +394,7 @@ const occEndTime = o => o.e.allDay ? '' : (o.endTime || o.e.endTime || '');
 /* ===== end recurrence engine ===== */
 
 let META = { colors: {}, presets: {}, suggestions: [], guests: [], today: '' }, EVENTS = [];
-const state = { view: 'list', cursor: '', color: 'blue', edit: null, guestsKnown: true, saving: false, submitId: '' };
+const state = { view: 'month', cursor: '', color: 'blue', edit: null, guestsKnown: true, saving: false, submitId: '' }; // V3.2 minor: always open on Month
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const hex = name => META.colors[name] || META.colors.blue || '#1e6fbf';
