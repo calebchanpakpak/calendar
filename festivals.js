@@ -58,18 +58,18 @@
     return ymd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
   }
 
-  /** Wallpaper styles: soft pink-blue theme, faint emoji motif, readable text. */
+  /** Wallpaper styles: V3.3 dark theme, faint emoji motif, readable text. */
   const STYLES = {
-    newyear:   { name: '元旦',     emoji: '🎉', bg: '#e8f0ff', ink: '#3d4f9a', motif: 'rgba(90,109,190,.14)' },
-    cny:       { name: '農曆年初一', emoji: '🧧', bg: '#ffe8e8', ink: '#a03030', motif: 'rgba(196,60,60,.16)' },
-    valentine: { name: '情人節',   emoji: '💕', bg: '#ffe6f0', ink: '#b04070', motif: 'rgba(214,80,130,.14)' },
-    easter:    { name: '復活節',   emoji: '🐣', bg: '#eefae8', ink: '#3d7a30', motif: 'rgba(90,150,70,.14)' },
-    duanwu:    { name: '端午節',   emoji: '🐉', bg: '#e6f7f2', ink: '#2a7a68', motif: 'rgba(40,140,120,.14)' },
-    midautumn: { name: '中秋節',   emoji: '🌕', bg: '#fff4e0', ink: '#9a6a10', motif: 'rgba(200,140,40,.16)' },
-    xmasEve:   { name: '平安夜',   emoji: '🎄', bg: '#e8f6ee', ink: '#2a6a40', motif: 'rgba(50,130,80,.14)' },
-    xmas:      { name: '聖誕節',   emoji: '🎅', bg: '#ffe9e9', ink: '#a03030', motif: 'rgba(180,50,50,.14)' },
-    dongzhi:   { name: '冬至',     emoji: '🥟', bg: '#eef2fa', ink: '#3d4f9a', motif: 'rgba(90,109,190,.14)' },
-    nye:       { name: '除夕夜',   emoji: '🎆', bg: '#f3e8ff', ink: '#6a3a9a', motif: 'rgba(120,70,180,.14)' }
+    newyear:   { name: '元旦',     emoji: '🎉', bg: '#13203f', ink: '#8fb4ff', motif: 'rgba(90,109,190,.14)' },
+    cny:       { name: '農曆年初一', emoji: '🧧', bg: '#3a1214', ink: '#ff7a7a', motif: 'rgba(196,60,60,.16)' },
+    valentine: { name: '情人節',   emoji: '💕', bg: '#3a1328', ink: '#ff7eb6', motif: 'rgba(214,80,130,.14)' },
+    easter:    { name: '復活節',   emoji: '🐣', bg: '#14301a', ink: '#7fe07a', motif: 'rgba(90,150,70,.14)' },
+    duanwu:    { name: '端午節',   emoji: '🐉', bg: '#0f2e29', ink: '#5fe3c7', motif: 'rgba(40,140,120,.14)' },
+    midautumn: { name: '中秋節',   emoji: '🌕', bg: '#33260a', ink: '#ffc65a', motif: 'rgba(200,140,40,.16)' },
+    xmasEve:   { name: '平安夜',   emoji: '🎄', bg: '#10291a', ink: '#6fe39a', motif: 'rgba(50,130,80,.14)' },
+    xmas:      { name: '聖誕節',   emoji: '🎅', bg: '#3a1214', ink: '#ff7a7a', motif: 'rgba(180,50,50,.14)' },
+    dongzhi:   { name: '冬至',     emoji: '🥟', bg: '#161d33', ink: '#9eb6ff', motif: 'rgba(90,109,190,.14)' },
+    nye:       { name: '除夕夜',   emoji: '🎆', bg: '#26143d', ink: '#cf9cff', motif: 'rgba(120,70,180,.14)' }
   };
 
   /** All festival wallpapers that fall in Gregorian year `y` (and spill from adjacent lunar years). */
@@ -104,8 +104,8 @@
   /* ===== V3.2 dating anniversary wallpapers (date-only, never events) ===== */
   /** Start date of the relationship; day 1 = this date. Single config constant. */
   const ANNIVERSARY_START = '2026-02-17';
-  const ANNIV_STYLE = { kind: 'anniv', emoji: '💛', bg: '#ffe4ef', ink: '#b04070', motif: 'rgba(214,80,130,.16)' };
-  const DAYS_STYLE = { kind: 'days', emoji: '💛', bg: '#fff0f6', ink: '#a03868', motif: 'rgba(214,80,130,.12)' };
+  const ANNIV_STYLE = { kind: 'anniv', emoji: '💛', bg: '#401230', ink: '#ff7ec0', motif: 'rgba(214,80,130,.16)' };
+  const DAYS_STYLE = { kind: 'days', emoji: '💛', bg: '#2e0f23', ink: '#ff9ccd', motif: 'rgba(214,80,130,.12)' };
 
   function daysBetween(a, b) {
     return Math.round((fromYmd(b) - fromYmd(a)) / 864e5);

@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Calendar</title>
-<!-- Calendar V3.2 (local-first PWA, GitHub Pages): static files + IndexedDB on the phone + background sync to the
+<!-- Calendar V3.3 (local-first PWA, GitHub Pages): static files + IndexedDB on the phone + background sync to the
      Apps Script JSON API (Api.gs doPost). The UI is the V2.4 page. No server URL or token in this file:
      both are typed once in the Connection sheet and stay on the phone. -->
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#5a6dbe">
+<meta name="theme-color" content="#000000">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Calendar">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <style>
   /* v2.1 theme: soft pink-blue. Event colour groups (CONFIG.COLORS) are not part of the theme. */
   :root {
@@ -192,6 +192,50 @@
   .hint { font-size:12px; color:var(--muted); margin-top:8px; }
   .failrow { font-size:13px; padding:6px 0; border-bottom:1px solid var(--line-soft); }
   .failrow b { display:block; }
+
+  /* ===== V3.3: dark theme (Apple Calendar dark style) with neon accents ===== */
+  :root {
+    --bg1:#000000; --bg2:#000000; --card:#1c1c1e; --card2:#2c2c2e; --line:#38383a; --line-soft:#262628;
+    --primary:#0af5ff; --primary-hover:#5ef9ff; --on-primary:#000;      /* neon cyan: buttons, today */
+    --accent:#ff2fd1; --accent-light:#3a1033;                             /* neon magenta: tabs, toggles, focus */
+    --text:#f2f2f7; --muted:#9a9aa3; --today-col:#06262a; --other-day:#0b0b0c;
+    --danger:#ff453a; --danger-light:#3a1512; color-scheme:dark;
+  }
+  body { background:#000; }
+  header { background:rgba(10,10,12,.88); }
+  button { background:var(--card2); color:var(--text); border-color:var(--line); }
+  button:hover { background:#3a3a3c; border-color:var(--accent); }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow:0 0 0 3px rgba(255,47,209,.55); }
+  button.primary { background:var(--primary); color:var(--on-primary); border-color:var(--primary); font-weight:600; box-shadow:0 0 10px rgba(10,245,255,.35); }
+  button.primary:hover { background:var(--primary-hover); }
+  .tabs button.on { background:var(--accent); color:#000; border-color:var(--accent); box-shadow:0 0 10px rgba(255,47,209,.45); }
+  .time, .dp-time, #pop .scope-sub { color:#c7c7cc; }
+  .badge { background:rgba(255,255,255,.12); }
+  .blk { border-color:rgba(0,0,0,.6); }
+  .now { border-top-color:#ff2fd1; }
+  .wk-hours div, .wk-col .hr { color:#77777e; }
+  .mo .cell:hover { background:#161618; }
+  .mo .cell.other { color:#5c5c63; }
+  .mo .cell.today { background:#06262a; box-shadow:inset 0 0 0 2px var(--primary); }
+  .mo .cell.today .num { background:var(--primary); color:#000; font-weight:700; }
+  .mo .cell.festive[data-emoji]::before, .mo .cell.festive[data-emoji2]::after { opacity:.42; }
+  form input, form select, form textarea { background:#2c2c2e; border-color:#48484a; color:var(--text); }
+  #sugg, #famSugg { box-shadow:0 4px 14px rgba(0,0,0,.6); }
+  .sw { border-color:#000; box-shadow:0 0 0 1px #48484a; }
+  .sw.on { box-shadow:0 0 0 3px #fff; }
+  button.del { border-color:#5a2420; background:var(--card); }
+  button.danger:hover { background:#ff6a61; }
+  #popBack { background:rgba(0,0,0,.6); }
+  #pop { box-shadow:0 4px 24px rgba(0,0,0,.7); }
+  .syncpill, .syncpill:hover { background:var(--card2); border-color:var(--line); }
+  .syncpill.ok { color:#30d158; border-color:#1f5c2e; }
+  .syncpill.pend { color:#5ee7ff; border-color:#145060; background:#0b2a33; }
+  .syncpill.off { color:#c7c7cc; background:#2c2c2e; }
+  .syncpill.bad { border-color:#5a2420; background:#2a1210; }
+  .badge.pend { background:#0b2a33; color:#5ee7ff; }
+  .toast { background:#2c2c2e; color:#fff; }
+  .card { background:var(--card); }
+  .fld + input { background:#2c2c2e; color:var(--text); }
 </style>
 </head>
 <body>
@@ -397,15 +441,19 @@ let META = { colors: {}, presets: {}, suggestions: [], guests: [], today: '' }, 
 const state = { view: 'month', cursor: '', color: 'blue', edit: null, guestsKnown: true, saving: false, submitId: '' }; // V3.2 minor: always open on Month
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const hex = name => META.colors[name] || META.colors.blue || '#1e6fbf';
+/* V3.3 dark theme: vivid display colours per Sheet colour NAME (Sheet values unchanged; client-side only) */
+const DARK_COLORS = { blue:'#3d9bff', orange:'#ff9f0a', green:'#30d158', yellow:'#ffcc00', cyan:'#5ee7ff', purple:'#c77dff',
+  red:'#ff453a', grey:'#a1a1aa', lightgreen:'#b4f05a', pink:'#ff4fa3', deepyellow:'#e89a00', brightyellow:'#f5ff3d',
+  teal:'#1fe0c0', olive:'#c2c23a' };
+const hex = name => DARK_COLORS[name] || META.colors[name] || DARK_COLORS.blue;
 /** readable text colour on a coloured background */
 const ink = h => { const n = parseInt(h.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#222' : '#fff'; };
 /** v2.1 soft colours: List rows, Week blocks and Month chips all use the colour at 0x22/255 (about 13%)
  *  on white, made solid so hour lines, overlaps and the tinted page background don't show through.
  *  Dark text for readability, plus a 3px left edge in the full colour so groups stay easy to tell apart. */
-const soft = h => { const n = parseInt(h.slice(1), 16), a = 0x22 / 255, m = c => Math.round(255 + (c - 255) * a);
+const soft = h => { const n = parseInt(h.slice(1), 16), a = 0.34, m = c => Math.round(28 + (c - 28) * a);   // V3.3: colour over #1c1c1e
   return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(c => m(c).toString(16).padStart(2, '0')).join(''); };
-const softStyle = h => 'background:' + soft(h) + ';color:#222;border-left:3px solid ' + h;
+const softStyle = h => 'background:' + soft(h) + ';color:#fff;border-left:3px solid ' + h;
 const visible = () => EVENTS.filter(e => !($('hideFamily').checked && e.category === 'family') &&
                                           !($('hidePersonal').checked && e.category !== 'family'));   // v2.1: Hide personal
 const fmtDay = (d, o) => new Date(ymd(d)).toLocaleDateString(undefined, Object.assign({ timeZone: 'UTC' }, o));
@@ -570,7 +618,7 @@ function renderMonth() {
       const festCls = marksWp.length ? ' festive' : '';
       const festStyle = marksWp.length ? CalFestivals.wallpaperBackground(marksWp) : '';
       const festAttr = (marksWp[0] ? ' data-emoji="' + marksWp[0].emoji + '"' : '') + (marksWp[1] ? ' data-emoji2="' + marksWp[1].emoji + '"' : '');
-      const festLabel = marksWp.length ? '<span class="fest-stack">' + marksWp.map(x => '<span class="fest" style="color:' + (x.ink || '#5a6dbe') + '">' + esc(x.name) + '</span>').join('') + '</span>' : '';
+      const festLabel = marksWp.length ? '<span class="fest-stack">' + marksWp.map(x => '<span class="fest" style="color:' + (x.ink || '#9ec5ff') + '">' + esc(x.name) + '</span>').join('') + '</span>' : '';
       html += '<div class="cell' + (d.slice(0, 7) !== m ? ' other' : '') + (d === META.today ? ' today' : '') + festCls + '" data-day="' + d + '"' + festAttr + ' style="' + festStyle + '"><div class="numline"><span class="num">' + (+d.slice(8)) + '</span>' +
         festLabel +
         (mk.length ? '<span class="marks">' + mk.map(o => '<i class="mk" style="background:' + hex(o.e.color) + '" title="' + esc(o.e.title) + '"></i>').join('') + '</span>' : '') + '</div>' +
@@ -651,13 +699,13 @@ const dupFamilyTitle = t => { t = String(t || '').trim(); return !t || hasPrefix
 
 function buildSwatches() {
   $('swatches').innerHTML = Object.keys(META.colors).filter(c => c !== META.familyColor).map(c =>
-    '<button type="button" class="sw' + (c === state.color ? ' on' : '') + '" data-c="' + c + '" title="' + c + '" style="background:' + META.colors[c] + '"></button>').join('');
+    '<button type="button" class="sw' + (c === state.color ? ' on' : '') + '" data-c="' + c + '" title="' + c + '" style="background:' + hex(c) + '"></button>').join('');
   $('swatches').querySelectorAll('.sw').forEach(b => b.onclick = () => { state.color = b.dataset.c; buildSwatches(); buildPresets(); });
 }
 function buildPresets() {   // quick title chips for the chosen colour (family: C: presets)
   const c = currentColor(), h = hex(c), list = META.presets[c] || [];
   $('presetRow').innerHTML = list.length ? '<span class="muted">Quick:</span>' + list.map(t =>
-    '<button type="button" class="pchip" style="border-color:' + h + ';color:' + (ink(h) === '#fff' ? h : '#222') + '">' + esc(t) + '</button>').join('') : '';
+    '<button type="button" class="pchip" style="border-color:' + h + ';color:' + h + '">' + esc(t) + '</button>').join('') : '';
   $('presetRow').querySelectorAll('.pchip').forEach(b => b.onclick = () => { $('title').value = b.textContent; hideSugg(); });
   buildFamPresets();
 }
@@ -665,7 +713,7 @@ function buildPresets() {   // quick title chips for the chosen colour (family: 
 function buildFamPresets() {
   const c = META.familyColor, h = hex(c), list = META.presets[c] || [];
   $('famPresetRow').innerHTML = list.length ? '<span class="muted">Quick:</span>' + list.map(t =>
-    '<button type="button" class="pchip" style="border-color:' + h + ';color:' + (ink(h) === '#fff' ? h : '#222') + '">' + esc(t) + '</button>').join('') : '';
+    '<button type="button" class="pchip" style="border-color:' + h + ';color:' + h + '">' + esc(t) + '</button>').join('') : '';
   $('famPresetRow').querySelectorAll('.pchip').forEach(b => b.onclick = () => { $('familyTitle').value = b.textContent; hideSugg(); });
 }
 function onCategory() {
@@ -1184,7 +1232,7 @@ function openSettings() {
   const s = ENG.status();
   $('pop').style.borderTopColor = 'var(--primary)';
   $('pop').innerHTML = '<h3>設定 Settings</h3>' +
-    '<div class="card"><div class="ct">同步 Sync（Calendar V3.2 · 資料存喺呢部機 IndexedDB）</div>' +
+    '<div class="card"><div class="ct">同步 Sync（Calendar V3.3 · 資料存喺呢部機 IndexedDB）</div>' +
     '<div class="kv"><span>上次同步 Last sync</span><span>' + esc(whenFull(s.lastOkAt)) + '</span></div>' +
     '<div class="kv"><span>等緊同步 Pending</span><span>' + s.pending + ' 項</span></div>' +
     '<div class="kv"><span>自動同步 Auto</span><span>開 App 時、有網時、返到 App 時、每 10 分鐘</span></div>' +

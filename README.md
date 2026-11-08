@@ -1,4 +1,4 @@
-# Calendar (V3.2)
+# Calendar (V3.3)
 
 Caleb's calendar as an installable web app (PWA) – opens instantly and works offline.
 
@@ -9,6 +9,8 @@ Caleb's calendar as an installable web app (PWA) – opens instantly and works o
 - The server address and the calendar's own token are typed in once (⚙︎ › Connection) and stay on the phone.
   **Neither is in this repository.**
 - Sheet times stay Europe/Helsinki wall-clock; the phone shows them in the device's current timezone and converts back on save.
+
+**V3.3:** Dark theme (Apple-Calendar-style black, neon accents, vivid event colours mapped client-side; Sheet colour values unchanged).
 
 **V3.2:** Device-timezone display (auto on travel); Month dating-anniversary wallpaper (💛 pink, monthly/yearly + unbounded 100-day marks, diagonal split when overlapping festivals); plus V3.1 end+1h / title suggest / 10 festivals.
 
